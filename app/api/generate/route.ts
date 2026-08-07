@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
 import OpenAI from "openai";
 
-// INCREASES VERCEL'S DEFAULT 10s TIMEOUT TO 60 SECONDS (Max for Free Tier)
-export const maxDuration = 60;
+export const maxDuration = 60; // Keeps the 60-second timeout allowance
 
 const SYSTEM_PROMPT = `
 You are CryptoPulse, an elite AI Research & Content Intelligence Agent built for a Web3 PR agency.
@@ -51,21 +50,22 @@ JSON OUTPUT SCHEMA:
 
 export async function POST() {
   try {
-    const apiKey = process.env.AGENTROUTER_API_KEY;
+    const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
       return NextResponse.json(
-        { error: "AGENTROUTER_API_KEY is not configured in environment variables." },
+        { error: "GEMINI_API_KEY is not configured in environment variables." },
         { status: 500 }
       );
     }
 
+    // Initialize using Google's OpenAI-compatible endpoint!
     const openai = new OpenAI({
       apiKey: apiKey,
-      baseURL: "https://api.agentrouter.org/v1",
+      baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/",
     });
 
     const response = await openai.chat.completions.create({
-      model: "gpt-4o", 
+      model: "gemini-1.5-pro", // Or "gemini-2.5-pro" if you prefer
       messages: [
         { role: "system", content: SYSTEM_PROMPT },
         { 
@@ -79,7 +79,7 @@ export async function POST() {
 
     const rawText = response.choices[0].message.content;
     if (!rawText) {
-      throw new Error("No response received from AgentRouter API.");
+      throw new Error("No response received from Gemini API.");
     }
 
     const data = JSON.parse(rawText);
