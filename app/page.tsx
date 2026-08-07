@@ -84,7 +84,6 @@ export default function CryptoPulseDashboard() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans p-6">
-      {/* Header Bar */}
       <header className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4 pb-8 border-b border-slate-800">
         <div>
           <div className="flex items-center gap-3">
@@ -110,14 +109,13 @@ export default function CryptoPulseDashboard() {
         </button>
       </header>
 
-      {/* Main Content Area */}
       <main className="max-w-7xl mx-auto mt-8">
         {!data && !loading && (
           <div className="border border-dashed border-slate-800 rounded-2xl p-12 text-center bg-slate-900/30">
             <Layers className="w-12 h-12 text-slate-600 mx-auto mb-4" />
             <h3 className="text-lg font-semibold text-slate-300">No Intelligence Briefing Loaded</h3>
             <p className="text-sm text-slate-500 mt-1 max-w-md mx-auto">
-              Click "Run Daily Briefing" to activate CryptoPulse. It will analyze primary sources, select the top 2 opportunities, and draft copy.
+              Click "Run Daily Briefing" to activate CryptoPulse.
             </p>
           </div>
         )}
@@ -137,7 +135,6 @@ export default function CryptoPulseDashboard() {
                 key={storyIdx} 
                 className="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 sm:p-8 backdrop-blur-sm"
               >
-                {/* Story Metadata Header */}
                 <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-800 pb-6">
                   <div>
                     <div className="flex items-center gap-3 mb-2">
@@ -146,9 +143,6 @@ export default function CryptoPulseDashboard() {
                       </span>
                       <span className="text-xs font-semibold px-3 py-1 rounded-full bg-slate-800 border border-slate-700 text-slate-300 uppercase">
                         {story.format}
-                      </span>
-                      <span className="text-xs font-medium text-slate-400">
-                        Posting Time: <strong className="text-slate-200">{story.posting_time_utc}</strong>
                       </span>
                     </div>
                     <h2 className="text-2xl font-bold text-white">{story.headline}</h2>
@@ -163,7 +157,6 @@ export default function CryptoPulseDashboard() {
                   </div>
                 </div>
 
-                {/* Strategic Justification & Summary */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 my-6 p-4 bg-slate-950/60 rounded-xl border border-slate-800/80 text-sm">
                   <div>
                     <span className="text-slate-400 font-medium">Why Selected:</span>
@@ -175,7 +168,6 @@ export default function CryptoPulseDashboard() {
                   </div>
                 </div>
 
-                {/* Content Editor / Draft Section */}
                 <div className="space-y-4 my-6">
                   <div className="flex items-center justify-between">
                     <h3 className="text-lg font-semibold text-slate-200 flex items-center gap-2">
@@ -236,7 +228,6 @@ export default function CryptoPulseDashboard() {
                   })}
                 </div>
 
-                {/* Hashtags & CTA Footer */}
                 <div className="flex flex-wrap gap-2 mb-6">
                   {story.hashtags.map((tag, i) => (
                     <span key={i} className="text-xs text-cyan-400 font-mono bg-cyan-950/40 border border-cyan-900/50 px-2.5 py-1 rounded-md">
@@ -245,7 +236,6 @@ export default function CryptoPulseDashboard() {
                   ))}
                 </div>
 
-                {/* AI Image Generation Prompt */}
                 <div className="bg-slate-950 border border-slate-800 rounded-xl p-5 my-6">
                   <div className="flex items-center justify-between mb-3">
                     <div className="flex items-center gap-2 text-sm font-semibold text-slate-200">
@@ -266,23 +256,6 @@ export default function CryptoPulseDashboard() {
                     <strong>Alt Text:</strong> {story.alt_text}
                   </p>
                 </div>
-
-                {/* Engagement & Organic Hooks */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-6">
-                  <div className="bg-slate-950/40 border border-slate-800/80 p-4 rounded-xl">
-                    <div className="flex items-center gap-2 text-xs font-semibold text-slate-400 mb-1">
-                      <MessageSquare className="w-3.5 h-3.5 text-cyan-400" /> Suggested First Reply
-                    </div>
-                    <p className="text-xs text-slate-300">{story.engagement.reply}</p>
-                  </div>
-
-                  <div className="bg-slate-950/40 border border-slate-800/80 p-4 rounded-xl">
-                    <div className="flex items-center gap-2 text-xs font-semibold text-slate-400 mb-1">
-                      <FileText className="w-3.5 h-3.5 text-blue-400" /> Blog Expansion Topic
-                    </div>
-                    <p className="text-xs text-slate-300">{story.engagement.blog_expansion}</p>
-                  </div>
-                </div>
               </section>
             ))}
           </div>
@@ -290,5 +263,4 @@ export default function CryptoPulseDashboard() {
       </main>
     </div>
   );
-            }
-
+}
