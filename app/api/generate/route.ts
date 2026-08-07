@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import OpenAI from "openai";
 
+// INCREASES VERCEL'S DEFAULT 10s TIMEOUT TO 60 SECONDS (Max for Free Tier)
+export const maxDuration = 60;
+
 const SYSTEM_PROMPT = `
 You are CryptoPulse, an elite AI Research & Content Intelligence Agent built for a Web3 PR agency.
 Your mission is to identify the highest-value crypto conversations happening right now and transform them into publication-ready content for X (Twitter).
