@@ -51,19 +51,18 @@ export async function POST() {
     const apiKey = process.env.AGENTROUTER_API_KEY;
     if (!apiKey) {
       return NextResponse.json(
-        { error: "AGENTROUTER_API_KEY is not configured in environment." },
+        { error: "AGENTROUTER_API_KEY is not configured in environment variables." },
         { status: 500 }
       );
     }
 
-    // Initialize OpenAI SDK with AgentRouter's base URL
     const openai = new OpenAI({
       apiKey: apiKey,
-      baseURL: "https://api.agentrouter.org/v1", // Standard AgentRouter endpoint
+      baseURL: "https://api.agentrouter.org/v1",
     });
 
     const response = await openai.chat.completions.create({
-      model: "gpt-4o", // Or any model you prefer routing through AgentRouter
+      model: "gpt-4o", 
       messages: [
         { role: "system", content: SYSTEM_PROMPT },
         { 
@@ -71,7 +70,7 @@ export async function POST() {
           content: "Execute daily research protocol. Discover top 2 high-impact stories, score them, format them for X, and output strictly valid JSON matching the requested structure." 
         }
       ],
-      response_format: { type: "json_object" }, // Forces valid JSON output
+      response_format: { type: "json_object" }, 
       temperature: 0.2,
     });
 
@@ -91,4 +90,3 @@ export async function POST() {
     );
   }
 }
-
