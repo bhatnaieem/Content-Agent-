@@ -6,13 +6,15 @@ import {
   Copy, 
   Check, 
   RefreshCw, 
-  Layers, 
-  Send, 
+  Activity, 
   Image as ImageIcon, 
-  BarChart2, 
-  MessageSquare, 
-  FileText,
-  AlertCircle
+  TrendingUp, 
+  MessageCircle, 
+  BookOpen,
+  AlertTriangle,
+  Zap,
+  Twitter,
+  Clock
 } from "lucide-react";
 
 interface Story {
@@ -83,179 +85,242 @@ export default function CryptoPulseDashboard() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 font-sans p-6">
-      <header className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4 pb-8 border-b border-slate-800">
-        <div>
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-cyan-500/10 border border-cyan-500/30 rounded-xl text-cyan-400">
-              <Sparkles className="w-6 h-6" />
-            </div>
-            <h1 className="text-2xl font-bold tracking-tight bg-gradient-to-r from-cyan-400 to-blue-500 bg-clip-text text-transparent">
-              CryptoPulse AI
-            </h1>
-          </div>
-          <p className="text-sm text-slate-400 mt-1">
-            Web3 PR & Content Intelligence Agent • Manual Publishing Dashboard
-          </p>
-        </div>
+    <div className="min-h-screen bg-[#0a0a0a] text-slate-200 font-sans selection:bg-cyan-500/30 selection:text-cyan-100 pb-20 relative overflow-hidden">
+      {/* Background Glow Effects */}
+      <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[400px] bg-cyan-900/20 blur-[120px] rounded-full pointer-events-none" />
+      <div className="absolute bottom-0 right-0 w-[600px] h-[600px] bg-blue-900/10 blur-[150px] rounded-full pointer-events-none" />
 
-        <button
-          onClick={fetchBriefing}
-          disabled={loading}
-          className="flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 font-medium text-slate-950 rounded-xl transition-all disabled:opacity-50 shadow-lg shadow-cyan-500/10 cursor-pointer"
-        >
-          <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
-          {loading ? "Analyzing Ecosystem..." : "Run Daily Briefing"}
-        </button>
+      {/* Glass Navbar */}
+      <header className="sticky top-0 z-50 bg-[#0a0a0a]/80 backdrop-blur-xl border-b border-white/5 px-6 py-4">
+        <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 bg-gradient-to-br from-cyan-500 to-blue-600 rounded-xl shadow-lg shadow-cyan-500/20">
+              <Sparkles className="w-5 h-5 text-white" />
+            </div>
+            <div>
+              <h1 className="text-xl font-bold tracking-tight text-white">CryptoPulse</h1>
+              <p className="text-xs text-slate-400 font-medium">Web3 Intelligence Dashboard</p>
+            </div>
+          </div>
+
+          <button
+            onClick={fetchBriefing}
+            disabled={loading}
+            className="group flex items-center gap-2 px-6 py-2.5 bg-white/5 hover:bg-white/10 border border-white/10 hover:border-cyan-500/50 font-medium text-sm text-slate-200 rounded-full transition-all disabled:opacity-50 cursor-pointer"
+          >
+            <RefreshCw className={`w-4 h-4 text-cyan-400 ${loading ? "animate-spin" : "group-hover:rotate-180 transition-transform duration-500"}`} />
+            {loading ? "Running AI Models..." : "Generate Daily Briefing"}
+          </button>
+        </div>
       </header>
 
-      <main className="max-w-7xl mx-auto mt-8">
+      {/* Main Layout */}
+      <main className="max-w-7xl mx-auto mt-10 px-6 relative z-10">
+        
+        {/* Empty State */}
         {!data && !loading && (
-          <div className="border border-dashed border-slate-800 rounded-2xl p-12 text-center bg-slate-900/30">
-            <Layers className="w-12 h-12 text-slate-600 mx-auto mb-4" />
-            <h3 className="text-lg font-semibold text-slate-300">No Intelligence Briefing Loaded</h3>
-            <p className="text-sm text-slate-500 mt-1 max-w-md mx-auto">
-              Click "Run Daily Briefing" to activate CryptoPulse.
+          <div className="flex flex-col items-center justify-center py-32 text-center">
+            <div className="w-20 h-20 bg-white/5 border border-white/10 rounded-3xl flex items-center justify-center mb-6 shadow-2xl">
+              <Activity className="w-10 h-10 text-slate-600" />
+            </div>
+            <h3 className="text-2xl font-bold text-white mb-2">No Active Intelligence</h3>
+            <p className="text-slate-400 max-w-md mx-auto mb-8">
+              Initiate the daily briefing to deploy the AI agent. It will scan primary Web3 sources, evaluate narratives, and draft publication-ready content.
             </p>
           </div>
         )}
 
+        {/* Loading State */}
         {loading && (
-          <div className="border border-slate-800 rounded-2xl p-12 text-center bg-slate-900/50">
-            <RefreshCw className="w-10 h-10 text-cyan-400 animate-spin mx-auto mb-4" />
-            <h3 className="text-lg font-semibold text-slate-200">Scanning On-Chain & Media Feeds...</h3>
-            <p className="text-sm text-slate-400 mt-1">Filtering noise, scoring impact, and drafting publication-ready copy.</p>
+          <div className="flex flex-col items-center justify-center py-32 text-center">
+            <div className="relative w-20 h-20 mb-6">
+              <div className="absolute inset-0 border-t-2 border-cyan-400 rounded-full animate-spin" />
+              <div className="absolute inset-2 border-r-2 border-blue-500 rounded-full animate-spin direction-reverse" />
+              <Zap className="absolute inset-0 m-auto w-6 h-6 text-cyan-400 animate-pulse" />
+            </div>
+            <h3 className="text-xl font-bold text-white mb-2">Analyzing Ecosystem Data</h3>
+            <p className="text-slate-400 text-sm">Cross-referencing on-chain metrics and primary sources...</p>
           </div>
         )}
 
+        {/* Data Loaded */}
         {data && (
           <div className="space-y-12">
-            {data.stories.map((story, storyIdx) => (
+            {data.stories?.map((story, storyIdx) => (
               <section 
                 key={storyIdx} 
-                className="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 sm:p-8 backdrop-blur-sm"
+                className="bg-white/[0.02] border border-white/10 rounded-3xl p-6 sm:p-10 backdrop-blur-md shadow-2xl"
               >
-                <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-800 pb-6">
-                  <div>
-                    <div className="flex items-center gap-3 mb-2">
-                      <span className="text-xs font-semibold px-3 py-1 rounded-full bg-cyan-500/10 border border-cyan-500/30 text-cyan-300 uppercase tracking-wider">
-                        {story.category}
+                {/* Header & Badges */}
+                <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-6 mb-8">
+                  <div className="flex-1">
+                    <div className="flex flex-wrap items-center gap-3 mb-4">
+                      <span className="text-xs font-bold px-3 py-1.5 rounded-full bg-cyan-500/10 border border-cyan-500/30 text-cyan-400 uppercase tracking-widest flex items-center gap-1.5">
+                        <TrendingUp className="w-3.5 h-3.5" /> {story.category}
                       </span>
-                      <span className="text-xs font-semibold px-3 py-1 rounded-full bg-slate-800 border border-slate-700 text-slate-300 uppercase">
+                      <span className="text-xs font-bold px-3 py-1.5 rounded-full bg-purple-500/10 border border-purple-500/30 text-purple-400 uppercase tracking-widest">
                         {story.format}
                       </span>
+                      <span className="text-xs font-medium text-slate-400 flex items-center gap-1.5 ml-auto sm:ml-0">
+                        <Clock className="w-3.5 h-3.5" /> {story.posting_time_utc}
+                      </span>
                     </div>
-                    <h2 className="text-2xl font-bold text-white">{story.headline}</h2>
+                    <h2 className="text-3xl font-extrabold text-white leading-tight mb-2">{story.headline}</h2>
                   </div>
 
-                  <div className="flex items-center gap-3 bg-slate-950 border border-slate-800 px-4 py-2 rounded-xl">
-                    <BarChart2 className="w-5 h-5 text-cyan-400" />
-                    <div>
-                      <div className="text-xs text-slate-500">Story Score</div>
-                      <div className="text-lg font-bold text-cyan-300">{story.score} / 100</div>
+                  <div className="flex items-center justify-center w-24 h-24 shrink-0 rounded-2xl bg-gradient-to-br from-slate-900 to-black border border-white/10 relative overflow-hidden shadow-inner">
+                    <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-cyan-400 to-blue-500" />
+                    <div className="text-center">
+                      <div className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mb-1">Impact</div>
+                      <div className="text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-blue-400">
+                        {story.score}
+                      </div>
                     </div>
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 my-6 p-4 bg-slate-950/60 rounded-xl border border-slate-800/80 text-sm">
-                  <div>
-                    <span className="text-slate-400 font-medium">Why Selected:</span>
-                    <p className="text-slate-300 mt-1">{story.reason}</p>
+                {/* Intelligence Briefing Cards */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-10">
+                  <div className="bg-black/40 border border-white/5 p-5 rounded-2xl">
+                    <h4 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2 flex items-center gap-2">
+                      <Activity className="w-4 h-4 text-blue-400" /> Strategic Reason
+                    </h4>
+                    <p className="text-sm text-slate-300 leading-relaxed">{story.reason}</p>
                   </div>
-                  <div>
-                    <span className="text-slate-400 font-medium">Executive Summary:</span>
-                    <p className="text-slate-300 mt-1">{story.summary}</p>
+                  <div className="bg-black/40 border border-white/5 p-5 rounded-2xl">
+                    <h4 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2 flex items-center gap-2">
+                      <BookOpen className="w-4 h-4 text-cyan-400" /> Executive Summary
+                    </h4>
+                    <p className="text-sm text-slate-300 leading-relaxed">{story.summary}</p>
                   </div>
                 </div>
 
-                <div className="space-y-4 my-6">
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-lg font-semibold text-slate-200 flex items-center gap-2">
-                      <Send className="w-4 h-4 text-cyan-400" /> Publication Copy (Editable)
+                <hr className="border-white/5 mb-10" />
+
+                {/* Content Editor Area */}
+                <div className="mb-8">
+                  <div className="flex items-center justify-between mb-6">
+                    <h3 className="text-xl font-bold text-white flex items-center gap-2">
+                      <Twitter className="w-5 h-5 text-blue-400" /> Publication Draft
                     </h3>
                     <button
                       onClick={() => handleCopy(story.thread.tweets.join("\n\n---\n\n"), `all-${storyIdx}`)}
-                      className="flex items-center gap-2 text-xs font-medium px-3 py-1.5 bg-slate-800 hover:bg-slate-700 rounded-lg text-slate-300 transition-colors cursor-pointer"
+                      className="flex items-center gap-2 text-xs font-bold px-4 py-2 bg-white/10 hover:bg-white/20 rounded-full text-white transition-all cursor-pointer"
                     >
-                      {copiedIndex === `all-${storyIdx}` ? <Check className="w-3.5 h-3.5 text-green-400" /> : <Copy className="w-3.5 h-3.5" />}
-                      Copy Entire {story.format === "thread" ? "Thread" : "Post"}
+                      {copiedIndex === `all-${storyIdx}` ? <Check className="w-4 h-4 text-green-400" /> : <Copy className="w-4 h-4" />}
+                      Copy {story.format === "thread" ? "Thread" : "Post"}
                     </button>
                   </div>
 
-                  {story.thread.tweets.map((tweetText, tweetIdx) => {
-                    const charCount = tweetText.length;
-                    const isOver = charCount > 280;
+                  {/* Twitter Mockup Editor */}
+                  <div className="space-y-4">
+                    {story.thread.tweets.map((tweetText, tweetIdx) => {
+                      const charCount = tweetText.length;
+                      const isOver = charCount > 280;
 
-                    return (
-                      <div key={tweetIdx} className="bg-slate-950 border border-slate-800 rounded-xl p-4 relative group">
-                        <div className="flex items-center justify-between text-xs text-slate-500 mb-2">
-                          <span className="font-semibold text-slate-400">
-                            {story.format === "thread" ? `Tweet ${tweetIdx + 1}` : "X Post"}
-                          </span>
-                          <div className="flex items-center gap-3">
-                            <span className={`font-mono text-xs ${isOver ? "text-red-400 font-bold" : "text-slate-400"}`}>
-                              {charCount} / 280
-                            </span>
-                            <button
-                              onClick={() => handleCopy(tweetText, `t-${storyIdx}-${tweetIdx}`)}
-                              className="text-slate-400 hover:text-white transition-colors cursor-pointer"
-                              title="Copy Tweet"
-                            >
-                              {copiedIndex === `t-${storyIdx}-${tweetIdx}` ? (
-                                <Check className="w-4 h-4 text-green-400" />
-                              ) : (
-                                <Copy className="w-4 h-4" />
-                              )}
-                            </button>
+                      return (
+                        <div key={tweetIdx} className="bg-black/60 border border-slate-800/80 rounded-3xl p-5 sm:p-6 relative hover:border-slate-700 transition-colors">
+                          <div className="flex gap-4">
+                            {/* Fake Avatar */}
+                            <div className="hidden sm:flex w-12 h-12 rounded-full bg-gradient-to-tr from-cyan-500 to-blue-600 items-center justify-center font-bold text-white shadow-lg shadow-cyan-500/20 shrink-0">
+                              PR
+                            </div>
+                            
+                            <div className="flex-1">
+                              <div className="flex items-center justify-between mb-3">
+                                <div className="flex items-center gap-2">
+                                  <span className="font-bold text-white text-sm">CryptoPulse</span>
+                                  <span className="text-slate-500 text-sm">@CryptoPulseHQ</span>
+                                </div>
+                                <button
+                                  onClick={() => handleCopy(tweetText, `t-${storyIdx}-${tweetIdx}`)}
+                                  className="text-slate-500 hover:text-cyan-400 transition-colors cursor-pointer"
+                                  title="Copy Tweet"
+                                >
+                                  {copiedIndex === `t-${storyIdx}-${tweetIdx}` ? (
+                                    <Check className="w-4 h-4 text-green-400" />
+                                  ) : (
+                                    <Copy className="w-4 h-4" />
+                                  )}
+                                </button>
+                              </div>
+
+                              <textarea
+                                value={tweetText}
+                                onChange={(e) => updateTweet(storyIdx, tweetIdx, e.target.value)}
+                                rows={3}
+                                className="w-full bg-transparent text-slate-200 text-[15px] leading-relaxed focus:outline-none resize-y border-0 focus:ring-0 p-0"
+                              />
+
+                              <div className="mt-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-t border-white/5 pt-3">
+                                {isOver ? (
+                                  <div className="flex items-center gap-1.5 text-xs text-red-400 font-medium">
+                                    <AlertTriangle className="w-4 h-4" />
+                                    Exceeds 280 characters limit.
+                                  </div>
+                                ) : (
+                                  <div className="text-xs text-slate-500 font-medium">Ready to publish</div>
+                                )}
+                                
+                                {/* Visual Character Ring */}
+                                <div className="flex items-center gap-2 self-end sm:self-auto">
+                                  <span className={`text-xs font-bold ${isOver ? 'text-red-400' : 'text-slate-400'}`}>
+                                    {charCount} / 280
+                                  </span>
+                                  <svg className="w-5 h-5 transform -rotate-90" viewBox="0 0 36 36">
+                                    <path className="text-white/10" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="currentColor" strokeWidth="3" />
+                                    <path className={`${isOver ? 'text-red-500' : 'text-cyan-400'}`} strokeDasharray={`${Math.min((charCount/280)*100, 100)}, 100`} d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="currentColor" strokeWidth="3" />
+                                  </svg>
+                                </div>
+                              </div>
+                            </div>
                           </div>
                         </div>
-
-                        <textarea
-                          value={tweetText}
-                          onChange={(e) => updateTweet(storyIdx, tweetIdx, e.target.value)}
-                          rows={3}
-                          className="w-full bg-transparent text-slate-100 text-sm focus:outline-none resize-y border-0 focus:ring-0 p-0"
-                        />
-
-                        {isOver && (
-                          <div className="flex items-center gap-1.5 text-xs text-red-400 mt-2">
-                            <AlertCircle className="w-3.5 h-3.5" />
-                            Exceeds X character limit. Trim down before posting.
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
+                      );
+                    })}
+                  </div>
                 </div>
 
-                <div className="flex flex-wrap gap-2 mb-6">
-                  {story.hashtags.map((tag, i) => (
-                    <span key={i} className="text-xs text-cyan-400 font-mono bg-cyan-950/40 border border-cyan-900/50 px-2.5 py-1 rounded-md">
-                      {tag}
-                    </span>
-                  ))}
-                </div>
-
-                <div className="bg-slate-950 border border-slate-800 rounded-xl p-5 my-6">
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-2 text-sm font-semibold text-slate-200">
-                      <ImageIcon className="w-4 h-4 text-purple-400" /> Midjourney / AI Image Prompt
+                {/* Generative AI Graphic Section */}
+                <div className="bg-gradient-to-br from-purple-900/20 to-black border border-purple-500/20 rounded-2xl p-6 mb-8 relative overflow-hidden">
+                  <div className="absolute top-0 right-0 w-32 h-32 bg-purple-500/10 blur-[50px] rounded-full pointer-events-none" />
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-2 text-sm font-bold text-purple-300 uppercase tracking-widest">
+                      <ImageIcon className="w-5 h-5" /> Image Generation Prompt
                     </div>
                     <button
                       onClick={() => handleCopy(story.graphic_prompt, `img-${storyIdx}`)}
-                      className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-white transition-colors cursor-pointer"
+                      className="flex items-center gap-2 text-xs font-bold text-purple-300 hover:text-white transition-colors cursor-pointer"
                     >
-                      {copiedIndex === `img-${storyIdx}` ? <Check className="w-3.5 h-3.5 text-green-400" /> : <Copy className="w-3.5 h-3.5" />}
+                      {copiedIndex === `img-${storyIdx}` ? <Check className="w-4 h-4 text-green-400" /> : <Copy className="w-4 h-4" />}
                       Copy Prompt
                     </button>
                   </div>
-                  <p className="text-xs font-mono text-slate-300 bg-slate-900 p-3 rounded-lg border border-slate-800 select-all">
+                  <p className="text-sm font-mono text-purple-100/80 leading-relaxed bg-black/40 p-4 rounded-xl border border-purple-500/10 select-all mb-3">
                     {story.graphic_prompt}
                   </p>
-                  <p className="text-xs text-slate-500 mt-2">
-                    <strong>Alt Text:</strong> {story.alt_text}
+                  <p className="text-xs text-slate-500">
+                    <strong className="text-slate-400">Alt Text:</strong> {story.alt_text}
                   </p>
                 </div>
+
+                {/* Engagement Hooks */}
+                <div className="flex flex-col sm:flex-row gap-4">
+                  <div className="flex-1 bg-blue-900/10 border border-blue-500/20 p-5 rounded-2xl">
+                    <div className="flex items-center gap-2 text-xs font-bold text-blue-400 uppercase tracking-widest mb-2">
+                      <MessageCircle className="w-4 h-4" /> Reply Hook
+                    </div>
+                    <p className="text-sm text-slate-300">{story.engagement.reply}</p>
+                  </div>
+
+                  <div className="flex-1 bg-cyan-900/10 border border-cyan-500/20 p-5 rounded-2xl">
+                    <div className="flex items-center gap-2 text-xs font-bold text-cyan-400 uppercase tracking-widest mb-2">
+                      <BookOpen className="w-4 h-4" /> Blog Expansion
+                    </div>
+                    <p className="text-sm text-slate-300">{story.engagement.blog_expansion}</p>
+                  </div>
+                </div>
+
               </section>
             ))}
           </div>
