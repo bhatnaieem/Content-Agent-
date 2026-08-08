@@ -1,6 +1,7 @@
 import { createHmac, timingSafeEqual } from "crypto";
 
 export const SESSION_COOKIE = "cryptopulse_session";
+const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 function secret() {
   const value = process.env.AUTH_SECRET;
@@ -9,7 +10,8 @@ function secret() {
 }
 
 export function createSessionToken() {
-  const payload = `cryptopulse:${Date.now()}`;
+  const expires = Date.now() + SESSION_TTL_MS;
+  const payload = `cryptopulse:${expires}`;
   const signature = createHmac("sha256", secret()).update(payload).digest("hex");
   return `${Buffer.from(payload).toString("base64url")}.${signature}`;
 }
@@ -20,7 +22,9 @@ export function verifySessionToken(token?: string | null) {
   if (!encoded || !signature) return false;
   try {
     const payload = Buffer.from(encoded, "base64url").toString("utf8");
-    if (!payload.startsWith("cryptopulse:")) return false;
+    const [, expiresText] = payload.split(":");
+    const expires = Number(expiresText);
+    if (!payload.startsWith("cryptopulse:") || !Number.isFinite(expires) || Date.now() > expires) return false;
     const expected = createHmac("sha256", secret()).update(payload).digest("hex");
     const a = Buffer.from(signature, "hex");
     const b = Buffer.from(expected, "hex");
