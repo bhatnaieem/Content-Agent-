@@ -59,15 +59,15 @@ export async function POST() {
     }
 
     // Initialize using Google's OpenAI-compatible endpoint!
-        // 1. Ensure the baseURL ends exactly with /openai/
+            // Ensure the baseURL is still exactly this:
     const openai = new OpenAI({
       apiKey: apiKey,
       baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/",
     });
 
-    // 2. Ensure the model name has no typos
+    // ⬇️ CHANGE THE MODEL NAME HERE ⬇️
     const response = await openai.chat.completions.create({
-      model: "gemini-1.5-flash", 
+      model: "gemini-3.6-flash", 
       messages: [
         { role: "system", content: SYSTEM_PROMPT },
         { 
