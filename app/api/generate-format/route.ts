@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { generateWithLLM } from "../../../lib/llm";
 
-export const maxDuration = 45;
+export const maxDuration = 60;
 
 type Format = "reply" | "quote" | "poll" | "blog" | "creative";
 
@@ -18,14 +18,20 @@ export async function POST(request: Request) {
     const body = await request.json();
     const format = body?.format as Format;
     const story = body?.story;
+
     if (!["reply", "quote", "poll", "blog", "creative"].includes(format)) {
-      return NextResponse.json({ error: "Unsupported content format." }, { status: 400 });
+      return NextResponse.json({ ok: false, error: "Unsupported content format." }, { status: 400 });
     }
-    if (!story?.headline) return NextResponse.json({ error: "Story is required." }, { status: 400 });
+    if (!story?.headline) {
+      return NextResponse.json({ ok: false, error: "Story is required." }, { status: 400 });
+    }
+
+    // Prefer Gemini for fast on-demand studio generation when it is configured.
+    const provider = body?.provider || (process.env.GEMINI_API_KEY ? "gemini" : "nemotron");
 
     const result = await generateWithLLM({
-      provider: body?.provider || "auto",
-      system: `You are CryptoPulse's Content Studio. Generate ONLY the requested format. ${instructions[format]}
+      provider,
+      system: `You are Web3 Pulse's Content Studio. Generate ONLY the requested format. ${instructions[format]}
 
 Use only the supplied story facts. Never invent statistics, quotes, sources, dates, or claims. Return plain text only, with no JSON, markdown fences, or preamble.`,
       user: `Create the ${format} now.
@@ -39,9 +45,12 @@ Keywords: ${(story.keywords || []).join(", ")}`,
       temperature: format === "creative" ? 0.7 : 0.5,
     });
 
-    return NextResponse.json({ content: result.content, provider: result.provider, model: result.model, format });
+    return NextResponse.json({ ok: true, content: result.content, provider: result.provider, model: result.model, format });
   } catch (error: any) {
-    console.error("CryptoPulse format generation error:", error);
-    return NextResponse.json({ error: error?.message || "Failed to generate content." }, { status: 500 });
+    console.error("Web3 Pulse format generation error:", error);
+    return NextResponse.json(
+      { ok: false, error: error?.message || "Failed to generate content." },
+      { status: 500 }
+    );
   }
 }
