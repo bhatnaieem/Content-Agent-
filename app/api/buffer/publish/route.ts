@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createBufferPost } from "../../../../../lib/buffer";
+import { createBufferPost } from "../../../../lib/buffer";
 
 export const runtime = "nodejs";
 
