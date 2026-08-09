@@ -126,3 +126,5 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: error.message || "Failed to generate content intelligence." }, { status: 500 });
   }
 }
+
+// Radar patch trigger
