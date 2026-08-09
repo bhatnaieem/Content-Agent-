@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getBufferWorkspace } from "../../../../../lib/buffer";
+import { getBufferWorkspace } from "../../../../lib/buffer";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
