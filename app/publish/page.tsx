@@ -1,47 +1,176 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, CalendarClock, Check, Image as ImageIcon, Link2, Loader2, Send, ShieldCheck, Sparkles, Twitter, Users, X } from "lucide-react";
+import { ArrowLeft, CalendarClock, Check, Image as ImageIcon, Link2, Loader2, Send, ShieldCheck, Sparkles, Twitter, X } from "lucide-react";
 
-type Channel = { id:string; name:string; displayName:string|null; descriptor:string; service:string; avatar:string; isDisconnected:boolean; isLocked:boolean; isQueuePaused:boolean; externalLink:string|null };
-type Workspace = { organization:{id:string;name:string;channelCount:number;limits:{channels:number;scheduledPosts:number;scheduledThreadsPerChannel?:number}}|null; channels:Channel[]; plan:string; planSource:string; account:{name:string;timezone:string} };
-type ThreadItem = { text:string; imageUrl:string; altText:string };
+type Channel = { id: string; name: string; displayName: string | null; service: string; isDisconnected: boolean; isLocked: boolean; isQueuePaused: boolean; externalLink: string | null };
+type Workspace = { organization: { id: string; name: string; channelCount: number; limits: { channels: number; scheduledPosts: number } } | null; channels: Channel[]; plan: string; planSource: string; account: { name: string; timezone: string } };
+type ThreadItem = { text: string; imageUrl: string; altText: string };
+type DeliveryMode = "shareNow" | "addToQueue" | "customScheduled";
 
-const supported=["twitter","facebook","linkedin","threads","pinterest"];
-const labels:Record<string,string>={twitter:"X",facebook:"Facebook",linkedin:"LinkedIn",threads:"Threads",pinterest:"Pinterest"};
+const supported = ["twitter", "facebook", "linkedin", "threads", "pinterest"];
+const labels: Record<string, string> = { twitter: "X", facebook: "Facebook", linkedin: "LinkedIn", threads: "Threads", pinterest: "Pinterest" };
+const emptyThread = (): ThreadItem[] => [{ text: "", imageUrl: "", altText: "" }];
 
-function variant(text:string,service:string){const clean=text.trim();if(service==="twitter")return clean.length>280?clean.slice(0,276)+"…":clean;if(service==="threads")return clean.length>500?clean.slice(0,496)+"…":clean;if(service==="linkedin")return `${clean}\n\nWhat do you think?`;if(service==="pinterest")return `${clean}\n\nSave this for later.`;return clean;}
-function emptyThread():ThreadItem[]{return [{text:"",imageUrl:"",altText:""}];}
-
-export default function PublishPage(){
- const [workspace,setWorkspace]=useState<Workspace|null>(null),[loading,setLoading]=useState(true),[error,setError]=useState(""),[selected,setSelected]=useState<string[]>([]),[contentMode,setContentMode]=useState<"post"|"thread">("thread"),[source,setSource]=useState(""),[thread,setThread]=useState<ThreadItem[]>(emptyThread),[variants,setVariants]=useState<Record<string,string>>({}),[imageUrl,setImageUrl]=useState(""),[imageAlt,setImageAlt]=useState(""),[mode,setMode]=useState<"shareNow"|"addToQueue"|"customScheduled">("addToQueue"),[dueAt,setDueAt]=useState(""),[publishing,setPublishing]=useState(false),[result,setResult]=useState<string[]>([]);
- useEffect(()=>{fetch("/api/buffer/channels").then(async r=>{const j=await r.json();if(!r.ok)throw new Error(j.error||"Unable to connect to Buffer");setWorkspace(j);const eligible=(j.channels||[]).filter((c:Channel)=>supported.includes(c.service)&&!c.isDisconnected&&!c.isLocked);setSelected(eligible.slice(0,Math.min(3,eligible.length)).map((c:Channel)=>c.id));}).catch(e=>setError(e.message)).finally(()=>setLoading(false));},[]);
- const eligible=useMemo(()=>workspace?.channels.filter(c=>supported.includes(c.service)&&!c.isDisconnected&&!c.isLocked)||[],[workspace]);
- const toggle=(id:string)=>setSelected(x=>x.includes(id)?x.filter(v=>v!==id):x.length>=3?x:[...x,id]);
- const buildVariants=()=>{const master=contentMode==="thread"?(thread[0]?.text||""):source;const next:Record<string,string>={};eligible.forEach(c=>next[c.id]=variant(master,c.service));setVariants(next);};
- const updateThread=(index:number,key:keyof ThreadItem,value:string)=>setThread(items=>items.map((item,i)=>i===index?{...item,[key]:value}:item));
- const addThread=()=>setThread(x=>[...x,{text:"",imageUrl:"",altText:""}]);
- const removeThread=(i:number)=>setThread(x=>x.length===1?x:x.filter((_,n)=>n!==i));
- const publish=async()=>{setPublishing(true);setResult([]);const messages:string[]=[];for(const id of selected){const ch=eligible.find(c=>c.id===id);if(!ch)continue;try{const isThread=contentMode==="thread"&&(ch.service==="twitter"||ch.service==="threads");const payload={channelId:id,service:ch.service,text:isThread?thread[0].text:(variants[id]||source),mode,dueAt:mode==="customScheduled"?new Date(dueAt).toISOString():undefined,imageUrl:isThread?undefined:imageUrl,imageAltText:isThread?undefined:imageAlt,thread:isThread?thread.filter(t=>t.text.trim()).map(t=>({text:t.text.trim(),imageUrl:t.imageUrl.trim()||undefined,altText:t.altText.trim()||undefined})):undefined};const r=await fetch("/api/buffer/publish",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});const j=await r.json();if(!r.ok)throw new Error(j.error||"Buffer rejected the post");messages.push(`${labels[ch.service]||ch.service}: ${mode==="shareNow"?"published":mode==="customScheduled"?"scheduled":"added to queue"}`);}catch(e){messages.push(`${labels[ch.service]||ch.service}: ${e instanceof Error?e.message:"failed"}`);}}setResult(messages);setPublishing(false);};
- const canPublish=selected.length>0&&(contentMode==="thread"?thread.some(t=>t.text.trim()):source.trim())&&(mode!=="customScheduled"||dueAt);
- return <main className="wp-page"><div className="wp-shell">
-  <header className="wp-header"><div><div className="wp-kicker"><Send size={12}/> Web3 Pulse Publishing Studio</div><h1>Review → media → Buffer</h1><p>Publish only after you approve the content. Web3 Pulse detects your connected Buffer channels and limits targets to three.</p></div><a className="wp-back" href="/"><ArrowLeft size={14}/> Dashboard</a></header>
-  {loading&&<Panel><Loader2 className="spin" size={18}/><b>Connecting to Buffer…</b><span>Detecting connected channels and organization limits.</span></Panel>}
-  {error&&<Panel danger><ShieldCheck size={18}/><div><b>Buffer connection needed</b><p>{error}</p><small>Add <strong>BUFFER_API_KEY</strong> to Vercel Environment Variables and redeploy.</small></div></Panel>}
-  {workspace&&!loading&&<>
-   <section className="wp-metrics"><Metric label="Buffer status" value="Connected"/><Metric label="Plan signal" value={workspace.plan}/><Metric label="Connected channels" value={String(workspace.channels.length)}/><Metric label="Selected targets" value={`${selected.length}/3`}/></section>
-   <Panel><div className="wp-panel-head"><div><h2>1. Choose publishing targets</h2><p>Only connected, unlocked channels are selectable. You can select up to 3.</p></div><span className="wp-muted">{workspace.planSource}</span></div><div className="wp-channels">{workspace.channels.map(c=>{const usable=supported.includes(c.service)&&!c.isDisconnected&&!c.isLocked;const active=selected.includes(c.id);return <button key={c.id} disabled={!usable} onClick={()=>toggle(c.id)} className={`wp-channel ${active?"active":""}`}><div className="wp-channel-top"><b>{labels[c.service]||c.service}</b>{active?<Check size={15}/>:<span/>}</div><span>{c.displayName||c.name}</span><small>{!usable?(c.isLocked?"Locked":c.isDisconnected?"Disconnected":"Not enabled in this workflow"):c.isQueuePaused?"Queue paused":"Ready"}</small></button>})}</div></Panel>
-   <Panel><div className="wp-panel-head"><div><h2>2. Prepare content</h2><p>Use a master post or build a real X/Threads thread. Thread media can be attached to individual posts.</p></div><div className="wp-switch"><button className={contentMode==="thread"?"active":""} onClick={()=>setContentMode("thread")}><Twitter size={13}/> Thread</button><button className={contentMode==="post"?"active":""} onClick={()=>setContentMode("post")}><Sparkles size={13}/> Platform post</button></div></div>
-    {contentMode==="thread"?<div className="wp-thread">{thread.map((item,i)=><div className="wp-thread-item" key={i}><div className="wp-thread-label"><span>{i+1}/{thread.length}</span>{thread.length>1&&<button onClick={()=>removeThread(i)}><X size={13}/></button>}</div><textarea value={item.text} onChange={e=>updateThread(i,"text",e.target.value)} placeholder={i===0?"Thread hook…":"Next post…"}/><div className="wp-media-row"><input value={item.imageUrl} onChange={e=>updateThread(i,"imageUrl",e.target.value)} placeholder="Optional public image URL for this post"/><input value={item.altText} onChange={e=>updateThread(i,"altText",e.target.value)} placeholder="Alt text"/></div>{item.imageUrl&&<img className="wp-preview" src={item.imageUrl} alt={item.altText||"Thread media preview"} />}</div>)}<button className="wp-secondary" onClick={addThread}>+ Add thread post</button></div>:<><textarea className="wp-master" value={source} onChange={e=>setSource(e.target.value)} placeholder="Paste the master post from Content Studio…"/><div className="wp-media-card"><div><b><ImageIcon size={14}/> Attach image</b><small>Buffer retrieves media from a public URL when the post is created.</small></div><input value={imageUrl} onChange={e=>setImageUrl(e.target.value)} placeholder="https://…/image.jpg"/><input value={imageAlt} onChange={e=>setImageAlt(e.target.value)} placeholder="Alt text (recommended)"/>{imageUrl&&<img className="wp-preview" src={imageUrl} alt={imageAlt||"Post media preview"}/>}</div></>}
-    <div className="wp-build-row"><span className="wp-muted">{selected.length} target{selected.length===1?"":"s"} selected</span><button className="wp-primary" onClick={buildVariants} disabled={contentMode==="thread"?!thread[0]?.text.trim():!source.trim()}><Sparkles size={13}/> Generate platform variants</button></div></Panel>
-   <Panel><div className="wp-panel-head"><div><h2>3. Review platform content</h2><p>Edit anything before sending it to Buffer.</p></div></div>{eligible.map(c=><div className={`wp-variant ${selected.includes(c.id)?"selected":""}`} key={c.id}><div className="wp-variant-head"><div><b>{labels[c.service]||c.service}</b><span>{selected.includes(c.id)?"Publishing target":"Content only"}</span></div>{c.externalLink&&<a href={c.externalLink} target="_blank" rel="noreferrer"><Link2 size={12}/> Open account</a>}</div>{contentMode==="thread"&&(c.service==="twitter"||c.service==="threads")?<div className="wp-thread-note">This target will receive the {thread.filter(t=>t.text.trim()).length}-post thread above, including per-post media.</div>:<textarea value={variants[c.id]??""} onChange={e=>setVariants(v=>({...v,[c.id]:e.target.value}))} placeholder="Generate platform variants above…"/>}</div>)}
-   <div className="wp-schedule"><div><b><CalendarClock size={14}/> Delivery</b><small>Choose how Buffer should handle the selected targets.</small></div><select value={mode} onChange={e=>setMode(e.target.value as typeof mode)}><option value="addToQueue">Add to Buffer queue</option><option value="customScheduled">Schedule for a specific time</option><option value="shareNow">Publish now</option></select>{mode==="customScheduled"&&<input type="datetime-local" value={dueAt} onChange={e=>setDueAt(e.target.value)}/>}<button className="wp-publish" onClick={publish} disabled={publishing||!canPublish}>{publishing?<><Loader2 size={14} className="spin"/> Sending…</>:<><Send size={14}/> {mode==="shareNow"?"Publish selected targets":"Send to Buffer"}</>}</div>
-   {result.length>0&&<div className="wp-results">{result.map((r,i)=><div key={i}><Check size={14}/>{r}</div>)}</div>}
-   </Panel>
-   <div className="wp-footer"><ShieldCheck size={14}/> Human approval remains required. Web3 Pulse never silently publishes generated content.</div>
-  </>}
- </div><style>{css}</style></main>;
+function makeVariant(text: string, service: string) {
+  const clean = text.trim();
+  if (service === "twitter") return clean.length > 280 ? `${clean.slice(0, 276)}…` : clean;
+  if (service === "threads") return clean.length > 500 ? `${clean.slice(0, 496)}…` : clean;
+  if (service === "linkedin") return `${clean}\n\nWhat do you think?`;
+  if (service === "pinterest") return `${clean}\n\nSave this for later.`;
+  return clean;
 }
-function Panel({children,danger=false}:{children:React.ReactNode;danger?:boolean}){return <section className={`wp-panel ${danger?"danger":""}`}>{children}</section>}
-function Metric({label,value}:{label:string;value:string}){return <div className="wp-metric"><small>{label}</small><b>{value}</b></div>}
-const css=`.wp-page{min-height:100vh;background:#f5f8fc;color:#162033;font-family:Inter,system-ui,sans-serif}.wp-shell{max-width:1180px;margin:0 auto;padding:34px 24px 90px}.wp-header{display:flex;justify-content:space-between;gap:24px;align-items:flex-end;margin-bottom:22px}.wp-kicker{display:inline-flex;gap:7px;align-items:center;color:#087f91;font-size:10px;font-weight:900;text-transform:uppercase;letter-spacing:.14em}.wp-header h1{margin:9px 0 6px;font-size:34px;letter-spacing:-.04em}.wp-header p{margin:0;color:#68778c;font-size:13px;max-width:720px;line-height:1.6}.wp-back{display:inline-flex;gap:7px;align-items:center;text-decoration:none;color:#405069;background:#fff;border:1px solid #dce4ee;border-radius:10px;padding:10px 13px;font-size:11px;font-weight:800}.wp-metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px}.wp-metric,.wp-panel{background:#fff;border:1px solid #dce4ee;border-radius:18px;box-shadow:0 8px 30px rgba(31,51,73,.045)}.wp-metric{padding:15px}.wp-metric small,.wp-muted{display:block;color:#7a8798;font-size:9px;text-transform:uppercase;letter-spacing:.1em;font-weight:800}.wp-metric b{display:block;margin-top:7px;font-size:17px}.wp-panel{padding:20px;margin-bottom:14px}.wp-panel.danger{display:flex;gap:12px;align-items:flex-start;border-color:#fecaca;background:#fffafa;color:#991b1b}.wp-panel.danger p{margin:6px 0;color:#b42318;font-size:12px}.wp-panel.danger small{color:#7f1d1d}.wp-panel-head{display:flex;justify-content:space-between;gap:18px;align-items:flex-start}.wp-panel h2{font-size:17px;margin:0}.wp-panel p{font-size:11px;color:#718096;margin:5px 0 0}.wp-channels{display:grid;grid-template-columns:repeat(5,1fr);gap:9px;margin-top:15px}.wp-channel{border:1px solid #dce4ee;background:#fbfcfe;border-radius:13px;padding:13px;text-align:left;min-width:0}.wp-channel:disabled{opacity:.5;cursor:not-allowed}.wp-channel.active{border-color:#0ea5b7;background:#ecfeff;box-shadow:0 0 0 2px rgba(14,165,183,.08)}.wp-channel-top{display:flex;justify-content:space-between;color:#152238}.wp-channel>span{display:block;font-size:11px;color:#536277;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:6px}.wp-channel small{display:block;font-size:9px;color:#8290a2;margin-top:8px}.wp-switch{display:flex;border:1px solid #dce4ee;border-radius:9px;padding:2px;background:#f7f9fc}.wp-switch button{border:0;background:transparent;border-radius:7px;padding:7px 9px;font-size:10px;font-weight:800;color:#718096;display:flex;gap:5px;align-items:center}.wp-switch button.active{background:#fff;color:#087f91;box-shadow:0 2px 8px rgba(0,0,0,.05)}.wp-thread{margin-top:15px}.wp-thread-item{border:1px solid #dce4ee;background:#fafcff;border-radius:14px;padding:12px;margin-bottom:9px}.wp-thread-label{display:flex;justify-content:space-between;color:#087f91;font-size:10px;font-weight:900;margin-bottom:8px}.wp-thread-label button{border:0;background:transparent;color:#8a97a8}.wp-thread-item textarea,.wp-master,.wp-variant textarea{width:100%;border:1px solid #dce4ee;background:#fff;border-radius:10px;padding:11px;min-height:100px;resize:vertical;outline:none;font-size:12px;line-height:1.55;color:#162033}.wp-thread-item textarea:focus,.wp-master:focus,.wp-variant textarea:focus{border-color:#8bd5df}.wp-media-row{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:7px}.wp-media-row input,.wp-media-card input,.wp-schedule select,.wp-schedule>input{border:1px solid #dce4ee;background:#fff;border-radius:9px;padding:9px;font-size:10px;outline:none}.wp-preview{display:block;max-width:280px;max-height:180px;object-fit:cover;border-radius:10px;margin-top:8px;border:1px solid #dce4ee}.wp-secondary{border:1px dashed #b9c7d8;background:#fff;color:#526176;border-radius:9px;padding:9px 12px;font-size:10px;font-weight:800}.wp-master{min-height:140px;margin-top:15px}.wp-media-card{border:1px solid #dce4ee;border-radius:13px;padding:13px;margin-top:10px;background:#fafcff}.wp-media-card>b{display:flex;align-items:center;gap:6px;font-size:11px}.wp-media-card small{display:block;color:#7a8798;font-size:9px;margin:4px 0 9px}.wp-media-card input{width:100%;margin-bottom:7px}.wp-build-row{display:flex;justify-content:space-between;align-items:center;margin-top:11px}.wp-primary,.wp-publish{border:0;border-radius:9px;padding:10px 14px;background:#0f9fb1;color:#fff;font-size:10px;font-weight:900;display:inline-flex;align-items:center;gap:7px}.wp-primary:disabled,.wp-publish:disabled{opacity:.45;cursor:not-allowed}.wp-variant{border:1px solid #e0e6ee;background:#fbfcfe;border-radius:13px;padding:12px;margin-top:9px}.wp-variant.selected{border-color:#9bd8df;background:#fcffff}.wp-variant-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}.wp-variant-head>div{display:flex;align-items:center;gap:8px}.wp-variant-head b{font-size:11px}.wp-variant-head span{font-size:9px;color:#0b8b9b}.wp-variant-head a{font-size:9px;color:#627086;text-decoration:none;display:flex;gap:4px}.wp-variant textarea{min-height:90px}.wp-thread-note{background:#ecfeff;border:1px solid #c7eef2;border-radius:9px;padding:12px;color:#0f6976;font-size:10px}.wp-schedule{display:flex;align-items:center;gap:9px;flex-wrap:wrap;border-top:1px solid #e4e9f0;margin-top:14px;padding-top:14px}.wp-schedule>div{margin-right:auto}.wp-schedule b{display:flex;align-items:center;gap:6px;font-size:11px}.wp-schedule small{display:block;color:#7a8798;font-size:9px;margin-top:3px}.wp-schedule select{min-width:190px}.wp-results{margin-top:12px;padding:11px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;color:#166534;font-size:10px}.wp-results div{display:flex;align-items:center;gap:6px;margin:4px 0}.wp-footer{display:flex;align-items:center;justify-content:center;gap:7px;color:#7a8798;font-size:10px;padding:10px}.spin{animation:wp-spin 1s linear infinite}@keyframes wp-spin{to{transform:rotate(360deg)}}@media(max-width:850px){.wp-channels{grid-template-columns:repeat(2,1fr)}.wp-metrics{grid-template-columns:repeat(2,1fr)}.wp-header{align-items:flex-start;flex-direction:column}.wp-panel-head{flex-direction:column}.wp-media-row{grid-template-columns:1fr}}@media(max-width:520px){.wp-shell{padding:22px 13px 70px}.wp-channels{grid-template-columns:1fr}.wp-metrics{grid-template-columns:1fr 1fr}.wp-build-row{align-items:flex-start;gap:9px;flex-direction:column}.wp-schedule{align-items:stretch;flex-direction:column}.wp-schedule>div{width:100%}.wp-schedule select,.wp-schedule>input,.wp-publish{width:100%}}`;
+
+export default function PublishPage() {
+  const [workspace, setWorkspace] = useState<Workspace | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [selected, setSelected] = useState<string[]>([]);
+  const [contentMode, setContentMode] = useState<"post" | "thread">("thread");
+  const [source, setSource] = useState("");
+  const [thread, setThread] = useState<ThreadItem[]>(emptyThread);
+  const [variants, setVariants] = useState<Record<string, string>>({});
+  const [imageUrl, setImageUrl] = useState("");
+  const [imageAlt, setImageAlt] = useState("");
+  const [mode, setMode] = useState<DeliveryMode>("addToQueue");
+  const [dueAt, setDueAt] = useState("");
+  const [publishing, setPublishing] = useState(false);
+  const [result, setResult] = useState<string[]>([]);
+
+  useEffect(() => {
+    fetch("/api/buffer/channels")
+      .then(async (response) => {
+        const json = await response.json();
+        if (!response.ok) throw new Error(json.error || "Unable to connect to Buffer.");
+        setWorkspace(json);
+        const eligible = (json.channels || []).filter((channel: Channel) => supported.includes(channel.service) && !channel.isDisconnected && !channel.isLocked);
+        setSelected(eligible.slice(0, 3).map((channel: Channel) => channel.id));
+      })
+      .catch((err: unknown) => setError(err instanceof Error ? err.message : "Unable to connect to Buffer."))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const eligible = useMemo(() => workspace?.channels.filter((channel) => supported.includes(channel.service) && !channel.isDisconnected && !channel.isLocked) || [], [workspace]);
+
+  function toggleChannel(id: string) {
+    setSelected((current) => {
+      if (current.includes(id)) return current.filter((value) => value !== id);
+      if (current.length >= 3) return current;
+      return [...current, id];
+    });
+  }
+
+  function updateThread(index: number, key: keyof ThreadItem, value: string) {
+    setThread((items) => items.map((item, itemIndex) => itemIndex === index ? { ...item, [key]: value } : item));
+  }
+
+  function buildVariants() {
+    const master = contentMode === "thread" ? thread[0]?.text || "" : source;
+    const next: Record<string, string> = {};
+    eligible.forEach((channel) => { next[channel.id] = makeVariant(master, channel.service); });
+    setVariants(next);
+  }
+
+  function addThreadPost() { setThread((items) => [...items, { text: "", imageUrl: "", altText: "" }]); }
+  function removeThreadPost(index: number) { setThread((items) => items.length <= 1 ? items : items.filter((_, itemIndex) => itemIndex !== index)); }
+
+  async function publish() {
+    setPublishing(true);
+    setResult([]);
+    const messages: string[] = [];
+    for (const channelId of selected) {
+      const channel = eligible.find((item) => item.id === channelId);
+      if (!channel) continue;
+      try {
+        const isThread = contentMode === "thread" && (channel.service === "twitter" || channel.service === "threads");
+        const cleanThread = thread.filter((item) => item.text.trim()).map((item) => ({ text: item.text.trim(), imageUrl: item.imageUrl.trim() || undefined, altText: item.altText.trim() || undefined }));
+        const payload = {
+          channelId,
+          service: channel.service,
+          text: isThread ? cleanThread[0]?.text || "" : variants[channelId] || source,
+          mode,
+          dueAt: mode === "customScheduled" ? new Date(dueAt).toISOString() : undefined,
+          imageUrl: isThread ? undefined : imageUrl.trim() || undefined,
+          imageAltText: isThread ? undefined : imageAlt.trim() || undefined,
+          thread: isThread ? cleanThread : undefined,
+        };
+        const response = await fetch("/api/buffer/publish", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+        const json = await response.json();
+        if (!response.ok) throw new Error(json.error || "Buffer rejected the post.");
+        messages.push(`${labels[channel.service] || channel.service}: ${mode === "shareNow" ? "published" : mode === "customScheduled" ? "scheduled" : "added to queue"}`);
+      } catch (err: unknown) {
+        messages.push(`${labels[channel.service] || channel.service}: ${err instanceof Error ? err.message : "failed"}`);
+      }
+    }
+    setResult(messages);
+    setPublishing(false);
+  }
+
+  const threadReady = contentMode === "thread" && thread.some((item) => item.text.trim());
+  const postReady = contentMode === "post" && source.trim();
+  const canPublish = selected.length > 0 && Boolean(threadReady || postReady) && (mode !== "customScheduled" || Boolean(dueAt));
+
+  return (
+    <main style={styles.page}>
+      <div style={styles.shell}>
+        <header style={styles.header}>
+          <div>
+            <div style={styles.kicker}><Send size={13} /> Web3 Pulse Publishing Studio</div>
+            <h1 style={styles.h1}>Review → media → Buffer</h1>
+            <p style={styles.subtitle}>Approve content, attach media, then send it to your selected Buffer channels. Maximum three publishing targets.</p>
+          </div>
+          <a href="/" style={styles.back}><ArrowLeft size={14} /> Dashboard</a>
+        </header>
+
+        {loading && <Panel><Loader2 className="spin" size={18} /><b>Connecting to Buffer…</b><span>Detecting connected channels and organization limits.</span></Panel>}
+        {error && <Panel danger><ShieldCheck size={18} /><div><b>Buffer connection needed</b><p>{error}</p><small>Add <strong>BUFFER_API_KEY</strong> to Vercel Environment Variables and redeploy.</small></div></Panel>}
+
+        {workspace && !loading && <>
+          <section style={styles.metrics}>
+            <Metric label="Buffer status" value="Connected" />
+            <Metric label="Plan signal" value={workspace.plan} />
+            <Metric label="Connected channels" value={String(workspace.channels.length)} />
+            <Metric label="Selected targets" value={`${selected.length}/3`} />
+          </section>
+
+          <Panel>
+            <div style={styles.panelHead}><div><h2 style={styles.h2}>1. Choose publishing targets</h2><p style={styles.muted}>Only connected and unlocked channels can be selected.</p></div><span style={styles.note}>{workspace.planSource}</span></div>
+            <div style={styles.channels}>{workspace.channels.map((channel) => {
+              const usable = supported.includes(channel.service) && !channel.isDisconnected && !channel.isLocked;
+              const active = selected.includes(channel.id);
+              return <button key={channel.id} disabled={!usable} onClick={() => toggleChannel(channel.id)} style={{ ...styles.channel, ...(active ? styles.channelActive : {}) }}><div style={styles.channelTop}><b>{labels[channel.service] || channel.service}</b>{active ? <Check size={15} /> : null}</div><span>{channel.displayName || channel.name}</span><small>{!usable ? (channel.isLocked ? "Locked" : channel.isDisconnected ? "Disconnected" : "Not enabled") : channel.isQueuePaused ? "Queue paused" : "Ready"}</small></button>;
+            })}</div>
+          </Panel>
+
+          <Panel>
+            <div style={styles.panelHead}><div><h2 style={styles.h2}>2. Prepare content</h2><p style={styles.muted}>Create a platform post or a real X/Threads thread. Each thread post can have its own image and alt text.</p></div><div style={styles.switcher}><button onClick={() => setContentMode("thread")} style={contentMode === "thread" ? styles.switchActive : styles.switch}><Twitter size={13} /> Thread</button><button onClick={() => setContentMode("post")} style={contentMode === "post" ? styles.switchActive : styles.switch}>Post</button></div></div>
+            {contentMode === "thread" ? <div>
+              {thread.map((item, index) => <div key={index} style={styles.threadItem}><div style={styles.threadHead}><b>Post {index + 1}</b>{thread.length > 1 && <button onClick={() => removeThreadPost(index)} style={styles.iconButton}><X size={14} /></button>}</div><textarea value={item.text} onChange={(event) => updateThread(index, "text", event.target.value)} placeholder={index === 0 ? "Thread hook…" : "Next post…"} style={styles.textarea} /><div style={styles.mediaGrid}><input value={item.imageUrl} onChange={(event) => updateThread(index, "imageUrl", event.target.value)} placeholder="Optional public image URL" style={styles.input} /><input value={item.altText} onChange={(event) => updateThread(index, "altText", event.target.value)} placeholder="Alt text" style={styles.input} /></div>{item.imageUrl && <img src={item.imageUrl} alt={item.altText || "Thread media preview"} style={styles.preview} />}</div>)}
+              <button onClick={addThreadPost} style={styles.secondary}>+ Add thread post</button>
+            </div> : <>
+              <textarea value={source} onChange={(event) => setSource(event.target.value)} placeholder="Paste the master post from Content Studio…" style={styles.textarea} />
+              <div style={styles.mediaBox}><b><ImageIcon size={14} /> Attach image</b><span>Use a public image URL so Buffer can retrieve the media.</span><input value={imageUrl} onChange={(event) => setImageUrl(event.target.value)} placeholder="https://…/image.jpg" style={styles.input} /><input value={imageAlt} onChange={(event) => setImageAlt(event.target.value)} placeholder="Alt text (recommended)" style={styles.input} />{imageUrl && <img src={imageUrl} alt={imageAlt || "Post media preview"} style={styles.preview} />}</div>
+            </>}
+            <div style={styles.actionRow}><span style={styles.note}>{selected.length} target{selected.length === 1 ? "" : "s"} selected</span><button onClick={buildVariants} disabled={contentMode === "thread" ? !thread[0]?.text.trim() : !source.trim()} style={styles.primary}><Sparkles size={13} /> Generate platform variants</button></div>
+          </Panel>
+
+          <Panel>
+            <div style={styles.panelHead}><div><h2 style={styles.h2}>3. Review platform content</h2><p style={styles.muted}>Edit anything before sending it to Buffer.</p></div></div>
+            {eligible.map((channel) => <div key={channel.id} style={{ ...styles.variant, ...(selected.includes(channel.id) ? styles.variantSelected : {}) }}><div style={styles.variantHead}><div><b>{labels[channel.service] || channel.service}</b><span style={styles.badge}>{selected.includes(channel.id) ? "Publishing target" : "Content only"}</span></div>{channel.externalLink && <a href={channel.externalLink} target="_blank" rel="noreferrer" style={styles.accountLink}><Link2 size={12} /> Open account</a>}</div>{contentMode === "thread" && (channel.service === "twitter" || channel.service === "threads") ? <div style={styles.threadNotice}>{thread.filter((item) => item.text.trim()).length}-post thread will be sent, with per-post media.</div> : <textarea value={variants[channel.id] || ""} onChange={(event) => setVariants((current) => ({ ...current, [channel.id]: event.target.value }))} placeholder="Generate platform variants above…" style={styles.textarea} />}</div>)}
+            <div style={styles.delivery}><div><b><CalendarClock size={14} /> Delivery</b><small>Choose how Buffer should handle selected targets.</small></div><select value={mode} onChange={(event) => setMode(event.target.value as DeliveryMode)} style={styles.select}><option value="addToQueue">Add to Buffer queue</option><option value="customScheduled">Schedule for a specific time</option><option value="shareNow">Publish now</option></select>{mode === "customScheduled" && <input type="datetime-local" value={dueAt} onChange={(event) => setDueAt(event.target.value)} style={styles.input} />}<button onClick={publish} disabled={publishing || !canPublish} style={styles.publish}>{publishing ? <><Loader2 size={14} className="spin" /> Sending…</> : <><Send size={14} /> {mode === "shareNow" ? "Publish selected targets" : "Send to Buffer"}</>}</button></div>
+            {result.length > 0 && <div style={styles.results}>{result.map((message, index) => <div key={index}><Check size={14} /> {message}</div>)}</div>}
+          </Panel>
+          <div style={styles.footer}><ShieldCheck size={14} /> Human approval remains required. Web3 Pulse never silently publishes generated content.</div>
+        </>}
+      </div>
+      <style>{"@keyframes spin{to{transform:rotate(360deg)}}.spin{animation:spin 1s linear infinite}"}</style>
+    </main>
+  );
+}
+
+function Panel({ children, danger = false }: { children: React.ReactNode; danger?: boolean }) { return <section style={{ ...styles.panel, ...(danger ? styles.danger : {}) }}>{children}</section>; }
+function Metric({ label, value }: { label: string; value: string }) { return <div style={styles.metric}><small>{label}</small><b>{value}</b></div>; }
+
+const styles: Record<string, React.CSSProperties> = {
+  page: { minHeight: "100vh", background: "#f5f8fc", color: "#162033", fontFamily: "Inter,system-ui,sans-serif" }, shell: { maxWidth: 1180, margin: "0 auto", padding: "34px 24px 90px" }, header: { display: "flex", justifyContent: "space-between", gap: 24, alignItems: "flex-end", marginBottom: 22 }, kicker: { display: "inline-flex", gap: 7, alignItems: "center", color: "#087f91", fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: ".14em" }, h1: { margin: "9px 0 6px", fontSize: 34, letterSpacing: "-.04em" }, h2: { fontSize: 17, margin: 0 }, subtitle: { margin: 0, color: "#68778c", fontSize: 13, maxWidth: 720, lineHeight: 1.6 }, back: { display: "inline-flex", gap: 7, alignItems: "center", textDecoration: "none", color: "#405069", background: "#fff", border: "1px solid #dce4ee", borderRadius: 10, padding: "10px 13px", fontSize: 11, fontWeight: 800 }, metrics: { display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 10, marginBottom: 14 }, metric: { background: "#fff", border: "1px solid #dce4ee", borderRadius: 14, padding: 14 }, panel: { background: "#fff", border: "1px solid #dce4ee", borderRadius: 18, padding: 20, marginBottom: 14, boxShadow: "0 8px 30px rgba(31,51,73,.045)" }, danger: { display: "flex", gap: 12, alignItems: "flex-start", borderColor: "#fecaca", background: "#fffafa", color: "#991b1b" }, panelHead: { display: "flex", justifyContent: "space-between", gap: 18, alignItems: "flex-start" }, muted: { color: "#718096", fontSize: 11 }, note: { color: "#7a8798", fontSize: 9, textTransform: "uppercase", letterSpacing: ".08em", fontWeight: 800 }, channels: { display: "grid", gridTemplateColumns: "repeat(5,1fr)", gap: 9, marginTop: 15 }, channel: { border: "1px solid #dce4ee", background: "#fbfcfe", borderRadius: 13, padding: 13, textAlign: "left", minWidth: 0, color: "#152238" }, channelActive: { borderColor: "#0ea5b7", background: "#ecfeff", boxShadow: "0 0 0 2px rgba(14,165,183,.08)" }, channelTop: { display: "flex", justifyContent: "space-between" }, switcher: { display: "flex", gap: 3, border: "1px solid #dce4ee", borderRadius: 9, padding: 2, background: "#f7f9fc" }, switch: { border: 0, background: "transparent", borderRadius: 7, padding: "7px 9px", fontSize: 10, fontWeight: 800, color: "#718096" }, switchActive: { border: 0, background: "#fff", borderRadius: 7, padding: "7px 9px", fontSize: 10, fontWeight: 800, color: "#087f91", boxShadow: "0 2px 8px rgba(0,0,0,.05)" }, threadItem: { border: "1px solid #dce4ee", background: "#fafcff", borderRadius: 14, padding: 12, marginTop: 12 }, threadHead: { display: "flex", justifyContent: "space-between", marginBottom: 8, color: "#087f91", fontSize: 10 }, iconButton: { border: 0, background: "transparent", color: "#7a8798" }, textarea: { width: "100%", minHeight: 105, border: "1px solid #dce4ee", background: "#fff", borderRadius: 10, padding: 11, resize: "vertical", outline: "none", fontSize: 12, lineHeight: 1.55, color: "#162033", boxSizing: "border-box" }, mediaGrid: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 8 }, input: { width: "100%", boxSizing: "border-box", border: "1px solid #dce4ee", background: "#fff", borderRadius: 9, padding: 10, fontSize: 11, color: "#162033" }, preview: { display: "block", maxWidth: 280, maxHeight: 180, objectFit: "cover", borderRadius: 10, marginTop: 9, border: "1px solid #dce4ee" }, secondary: { marginTop: 10, border: "1px solid #dce4ee", background: "#fff", color: "#405069", borderRadius: 9, padding: "9px 12px", fontSize: 10, fontWeight: 800 }, mediaBox: { display: "grid", gap: 8, marginTop: 12, padding: 13, border: "1px dashed #cbd6e2", borderRadius: 12 }, actionRow: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginTop: 13 }, primary: { border: 0, borderRadius: 9, padding: "10px 14px", background: "#0f9fb1", color: "#fff", fontSize: 11, fontWeight: 800 }, variant: { border: "1px solid #e1e7ef", borderRadius: 13, padding: 12, marginTop: 10, background: "#fafbfc" }, variantSelected: { borderColor: "#0ea5b7", background: "#f7feff" }, variantHead: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }, badge: { marginLeft: 8, color: "#087f91", fontSize: 9, fontWeight: 800 }, accountLink: { display: "inline-flex", gap: 5, alignItems: "center", color: "#536277", fontSize: 10, textDecoration: "none" }, threadNotice: { padding: 12, borderRadius: 10, background: "#ecfeff", color: "#087f91", fontSize: 11 }, delivery: { display: "grid", gridTemplateColumns: "1fr auto auto auto", gap: 10, alignItems: "center", marginTop: 15, paddingTop: 15, borderTop: "1px solid #e5eaf0" }, select: { border: "1px solid #dce4ee", borderRadius: 9, background: "#fff", padding: "9px 10px", fontSize: 11, color: "#162033" }, publish: { border: 0, borderRadius: 9, padding: "10px 14px", background: "#0f9fb1", color: "#fff", fontSize: 11, fontWeight: 800, display: "inline-flex", alignItems: "center", gap: 6 }, results: { marginTop: 12, padding: 12, borderRadius: 10, background: "#f0fdf4", color: "#166534", fontSize: 11 }, footer: { display: "flex", gap: 7, alignItems: "center", justifyContent: "center", color: "#718096", fontSize: 10, marginTop: 18 },
+};
