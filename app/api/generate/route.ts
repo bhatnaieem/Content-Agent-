@@ -3,9 +3,16 @@ import { generateWithLLM } from "../../../lib/llm";
 
 export const maxDuration = 60;
 
+type SourceDetail = {
+  name: string;
+  url: string;
+  published_at: string;
+};
+
 type Story = {
   headline: string; category: string; score: number; format: "thread" | "single post";
   reason: string; summary: string; keywords: string[]; hashtags: string[]; sources: string[];
+  source_details?: SourceDetail[];
   posting_time_utc: string; cta: string; graphic_prompt: string; alt_text: string;
   thread: { title: string; tweets: string[] };
   engagement?: { reply: string; quote_tweet: string; poll: string; blog_expansion: string };
@@ -13,10 +20,13 @@ type Story = {
 
 const RESEARCH_PROMPT = `You are CryptoPulse, a Web3 PR research and content intelligence agent.
 Find the TWO strongest recent crypto/Web3 opportunities and return strict JSON.
-Prioritize genuinely recent, high-impact stories and include source names/URLs when available.
+Prioritize genuinely recent, high-impact stories from the latest 48 hours when possible.
+For every story, provide source details ONLY when you actually know them. NEVER invent a URL, source name, or publication date.
+If a source URL or publication date is unavailable, leave that field as an empty string.
+Prefer primary/official sources, major crypto publications, regulatory filings, company announcements, and reputable market data.
 Create the core X thread/post plus metadata and a visual concept.
 JSON schema:
-{"date":"YYYY-MM-DD","generated_at_utc":"ISO","stories":[{"headline":"","category":"","score":0,"format":"thread|single post","reason":"","summary":"","keywords":[],"hashtags":[],"sources":[],"posting_time_utc":"","cta":"","graphic_prompt":"","alt_text":"","thread":{"title":"","tweets":[]}}]}`;
+{"date":"YYYY-MM-DD","generated_at_utc":"ISO","stories":[{"headline":"","category":"","score":0,"format":"thread|single post","reason":"","summary":"","keywords":[],"hashtags":[],"sources":[],"source_details":[{"name":"","url":"","published_at":"ISO or YYYY-MM-DD or empty"}],"posting_time_utc":"","cta":"","graphic_prompt":"","alt_text":"","thread":{"title":"","tweets":[]}}]}`;
 
 const FORMAT_PROMPT = `You are the CryptoPulse Content Studio. Create SIX genuinely different assets from the supplied story.
 Do NOT rewrite the same post six times. Each asset must have a different communication job.
@@ -30,6 +40,25 @@ ALT_TEXT: One concise accessibility description of the proposed image. Do not re
 
 Return ONLY JSON:
 {"reply":"","quote_tweet":"","poll":"","blog_expansion":"","creative":"","alt_text":""}`;
+
+function cleanSourceDetails(value: unknown): SourceDetail[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((x) => x && typeof x === "object")
+    .map((x: any) => ({
+      name: typeof x.name === "string" ? x.name.trim() : "",
+      url: typeof x.url === "string" && /^https?:\/\//i.test(x.url.trim()) ? x.url.trim() : "",
+      published_at: typeof x.published_at === "string" ? x.published_at.trim() : "",
+    }))
+    .filter((x) => x.name || x.url || x.published_at);
+}
+
+function normalizeStory(story: any): Story {
+  const sourceDetails = cleanSourceDetails(story.source_details);
+  const legacySources = Array.isArray(story.sources) ? story.sources.filter((x: unknown) => typeof x === "string") : [];
+  const sources = legacySources.length ? legacySources : sourceDetails.map((x) => x.url || x.name).filter(Boolean);
+  return { ...story, sources, source_details: sourceDetails };
+}
 
 export async function POST(request: Request) {
   try {
@@ -48,7 +77,7 @@ export async function POST(request: Request) {
     });
 
     const data = JSON.parse(research.content);
-    const stories: Story[] = Array.isArray(data.stories) ? data.stories : [];
+    const stories: Story[] = Array.isArray(data.stories) ? data.stories.map(normalizeStory) : [];
 
     // Generate format-specific assets separately so the model cannot simply reuse one block of text.
     const enriched = await Promise.all(stories.map(async (story) => {
