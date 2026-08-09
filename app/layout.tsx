@@ -5,22 +5,10 @@ import PublishNav from "./publish-nav";
 import ClientNav from "./client-nav";
 
 export const metadata: Metadata = {
-  title: "CryptoPulse AI Dashboard",
-  description: "Web3 PR & Content Intelligence Agent",
+  title: "Web3 Pulse AI",
+  description: "Web3 PR, research and content intelligence workspace",
 };
 
-export default function RootLayout({
-  children,
-}: Readonly<{
-  children: React.ReactNode;
-}>) {
-  return (
-    <html lang="en">
-      <body>
-        {children}
-        <ClientNav />
-        <PublishNav />
-      </body>
-    </html>
-  );
+export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+  return <html lang="en"><body>{children}<ClientNav/><PublishNav/></body></html>;
 }
