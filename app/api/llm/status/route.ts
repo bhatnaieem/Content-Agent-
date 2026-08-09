@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { configuredProviders } from "../../../../../lib/llm";
+import { configuredProviders } from "../../../../lib/llm";
 
 export async function GET() {
   const providers = configuredProviders();
