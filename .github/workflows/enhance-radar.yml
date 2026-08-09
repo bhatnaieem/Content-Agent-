@@ -17,7 +17,6 @@ jobs:
         shell: python
         run: |
           from pathlib import Path
-          import re
 
           p = Path('app/page.tsx')
           text = p.read_text()
@@ -32,16 +31,15 @@ jobs:
               'type Narrative = { name:string; count:number; score:number; avgScore:number; keywords:string[]; stories:Story[]; sourceCount:number; freshestSource:string; };'
           )
 
-          old = re.search(r'function Radar\\(\\{narratives,stories,switchTab\\}.*?\\nfunction VisualPackage', text, re.S)
-          if not old:
-              raise SystemExit('Radar function not found')
+          start = text.index('function Radar(')
+          end = text.index('function VisualPackage', start)
 
           new_radar = r'''function Radar({narratives,stories,switchTab}:{narratives:Narrative[];stories:Story[];switchTab:(tab:Tab)=>void}){
  const totalSources=stories.reduce((n,s)=>n+(s.source_details?.filter(x=>x.url||x.name).length||s.sources?.length||0),0);
  const datedSources=stories.flatMap(s=>s.source_details||[]).filter(x=>x.published_at);
  const freshest=datedSources.sort((a,b)=>new Date(b.published_at).getTime()-new Date(a.published_at).getTime())[0]?.published_at;
  const fmtDate=(value:string)=>{if(!value)return "Date unavailable";const d=new Date(value);return Number.isNaN(d.getTime())?value:d.toLocaleDateString(undefined,{month:"short",day:"numeric",year:"numeric"})};
- const sourceLabel=(x:SourceDetail)=>x.name||(()=>{try{return new URL(x.url).hostname.replace(/^www\\./,"")}catch{return "Source"}})();
+ const sourceLabel=(x:SourceDetail)=>x.name||(()=>{try{return new URL(x.url).hostname.replace(/^www\./,"")}catch{return "Source"}})();
  return <><div className="cp-section-head"><div><div className="cp-kicker"><TrendingUp size={12}/> Signal intelligence</div><h2>Narrative Radar</h2><p>Ranked themes based on impact, story coverage, freshness and source evidence — not just category labels.</p></div></div>
  { !stories.length?<div className="cp-empty"><div className="cp-empty-icon"><TrendingUp size={25}/></div><h3>No narratives yet</h3><p>Run a briefing to populate the radar.</p></div>:<>
  <div className="cp-radar-overview"><div className="cp-radar-stat"><span>Active narratives</span><strong>{narratives.length}</strong><small>themes in this briefing</small></div><div className="cp-radar-stat"><span>Source coverage</span><strong>{totalSources}</strong><small>source references attached</small></div><div className="cp-radar-stat"><span>Avg. impact</span><strong>{Math.round(stories.reduce((a,s)=>a+(s.score||0),0)/stories.length)}</strong><small>out of 100</small></div><div className="cp-radar-stat"><span>Freshest evidence</span><strong>{freshest?fmtDate(freshest):"—"}</strong><small>when publication date is available</small></div></div>
@@ -59,7 +57,7 @@ jobs:
  </>}
 function VisualPackage'''
 
-          text = text[:old.start()] + new_radar + text[old.end():]
+          text = text[:start] + new_radar + text[end + len('function VisualPackage'):]
           p.write_text(text)
       - name: Add radar styles
         shell: bash
