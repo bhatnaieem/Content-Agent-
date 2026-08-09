@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import OpenAI from "openai";
+import { generateWithLLM } from "../../../../lib/llm";
 
-export const maxDuration = 60; // Keeps the 60-second timeout allowance
+export const maxDuration = 60;
 
 const SYSTEM_PROMPT = `
 You are CryptoPulse, an elite AI Research & Content Intelligence Agent built for a Web3 PR agency.
@@ -48,46 +48,24 @@ JSON OUTPUT SCHEMA:
 }
 `;
 
-export async function POST() {
+export async function POST(request: Request) {
   try {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      return NextResponse.json(
-        { error: "GEMINI_API_KEY is not configured in environment variables." },
-        { status: 500 }
-      );
-    }
+    let requestedProvider: "auto" | "gemini" | "nemotron" = "auto";
+    try {
+      const body = await request.json();
+      if (["auto", "gemini", "nemotron"].includes(body?.provider)) requestedProvider = body.provider;
+    } catch {}
 
-    // Initialize using Google's OpenAI-compatible endpoint!
-            // Ensure the baseURL is still exactly this:
-    const openai = new OpenAI({
-      apiKey: apiKey,
-      baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/",
-    });
-
-    // ⬇️ CHANGE THE MODEL NAME HERE ⬇️
-    const response = await openai.chat.completions.create({
-      model: "gemini-3.6-flash", 
-      messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        { 
-          role: "user", 
-          content: "Execute daily research protocol. Discover top 2 high-impact stories, score them, format them for X, and output strictly valid JSON matching the requested structure." 
-        }
-      ],
-      response_format: { type: "json_object" }, 
+    const result = await generateWithLLM({
+      provider: requestedProvider,
+      system: SYSTEM_PROMPT,
+      user: "Execute daily research protocol. Discover top 2 high-impact stories, score them, format them for X, and output strictly valid JSON matching the requested structure.",
+      responseFormat: "json_object",
       temperature: 0.2,
     });
 
-
-    const rawText = response.choices[0].message.content;
-    if (!rawText) {
-      throw new Error("No response received from Gemini API.");
-    }
-
-    const data = JSON.parse(rawText);
-    return NextResponse.json(data);
-    
+    const data = JSON.parse(result.content);
+    return NextResponse.json({ ...data, llm_provider: result.provider, llm_model: result.model });
   } catch (error: any) {
     console.error("CryptoPulse Generation Error:", error);
     return NextResponse.json(
