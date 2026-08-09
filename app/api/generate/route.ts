@@ -3,88 +3,46 @@ import { generateWithLLM } from "../../../lib/llm";
 
 export const maxDuration = 60;
 
-const SYSTEM_PROMPT = `
-You are CryptoPulse, an elite AI Research & Content Intelligence Agent built for a Web3 PR agency.
-Your mission is to identify the highest-value crypto conversations happening right now and transform them into platform-ready content.
+const SYSTEM_PROMPT = `You are CryptoPulse, a Web3 PR research and content intelligence agent. Identify the TWO highest-quality recent crypto/Web3 opportunities and return valid JSON. Create genuinely different content assets; never reuse the same wording across formats.`;
+const SCHEMA = `Return {"date":"YYYY-MM-DD","generated_at_utc":"ISO timestamp","stories":[{"headline":"string","category":"string","score":95,"format":"thread|single post","reason":"string","summary":"string","keywords":["string"],"hashtags":["#string"],"sources":["string"],"posting_time_utc":"14:00 UTC","cta":"string","graphic_prompt":"string","alt_text":"string","thread":{"title":"string","tweets":["string"]},"engagement":{"reply":"string","quote_tweet":"string","poll":"Question + A/B/C/D options","blog_expansion":"substantial article draft"}}]}`;
 
-DAILY OBJECTIVES:
-1. Research/evaluate recent ecosystem developments.
-2. Select the TWO highest-quality opportunities.
-3. Decide format: "single post" or "thread".
-4. Generate DISTINCT content for every engagement format. Never reuse the same text across reply, quote tweet, poll, blog expansion, or creative/image prompt.
-5. Generate a useful visual concept and image-generation prompt for every story.
-6. Strictly output valid JSON matching the schema below.
-
-CONTENT RULES:
-- thread.tweets: A coherent X thread. Tweet 1 must hook, later tweets explain evidence/context, and the final tweet should conclude with a useful takeaway/CTA. Keep each tweet suitable for X.
-- engagement.reply: A short, natural reply to the original story/post. It should add a specific insight or ask a useful question. Do NOT copy the thread.
-- engagement.quote_tweet: A standalone quote-tweet caption that reacts to the source. It should provide a strong opinion, framing, or counterpoint. Do NOT copy the reply or thread.
-- engagement.poll: A complete poll concept with a concise question and 3-4 answer options. Format it as: "Question: ...\\nOptions: A) ... B) ... C) ... D) ...". Do NOT write a normal post here.
-- engagement.blog_expansion: A substantially longer article outline/draft with a headline, introduction, key sections, evidence/context, implications, and conclusion. Do NOT copy the thread.
-- graphic_prompt: A detailed image-generation prompt describing composition, subject, visual hierarchy, mood, lighting, Web3 context, and any important symbols. Do NOT put the social post text into the image prompt. Avoid requesting readable text/logos unless necessary.
-- alt_text: A concise accessibility description of the proposed visual, not a copy of the graphic prompt.
-- cta: A short call-to-action appropriate to the story.
-
-QUALITY RULE:
-Each field must have a different purpose and wording. Before returning JSON, internally check that reply, quote_tweet, poll, blog_expansion, and graphic_prompt are materially different from each other and from the thread.
-
-JSON OUTPUT SCHEMA:
-{
-  "date": "YYYY-MM-DD",
-  "generated_at_utc": "ISO-Timestamp",
-  "stories": [
-    {
-      "headline": "string",
-      "category": "string",
-      "score": 95,
-      "format": "thread" | "single post",
-      "reason": "string",
-      "summary": "string",
-      "keywords": ["string"],
-      "hashtags": ["#string"],
-      "sources": ["string"],
-      "posting_time_utc": "14:00 UTC",
-      "cta": "string",
-      "graphic_prompt": "string",
-      "alt_text": "string",
-      "thread": {
-        "title": "string",
-        "tweets": ["Tweet 1 text", "Tweet 2 text"]
-      },
-      "engagement": {
-        "reply": "string",
-        "quote_tweet": "string",
-        "poll": "Question: ...\\nOptions: A) ... B) ... C) ... D) ...",
-        "blog_expansion": "Title: ...\\n\\nIntroduction: ...\\n\\nKey sections: ...\\n\\nConclusion: ..."
-      }
+async function enrichFormats(data:any, provider:"auto"|"gemini"|"nemotron") {
+  if (!Array.isArray(data?.stories) || !data.stories.length) return data;
+  const result = await generateWithLLM({
+    provider,
+    system: `You are a senior Web3 social strategist. Create six DIFFERENT assets from each supplied story.
+REPLY: 1-2 conversational sentences adding a new insight or useful question; not a summary.
+QUOTE TWEET: a strong standalone opinion/reaction to accompany the original source; different angle from reply.
+POLL: one question plus exactly four concise options formatted Question:, A), B), C), D).
+BLOG: a real mini-article with title, introduction, 3-5 sections, implications and conclusion; substantially longer than social copy.
+GRAPHIC PROMPT: visual-only image-generation instructions covering subject, composition, style, lighting and layout; never write social copy into it.
+ALT TEXT: short accessibility description of the proposed image.
+Do not copy sentences between any assets. Return JSON only.`,
+    user:`For each story below, return {"assets":[{"reply":"","quote_tweet":"","poll":"","blog_expansion":"","graphic_prompt":"","alt_text":""}]} in the same order. Preserve facts and do not invent statistics.
+${JSON.stringify(data.stories.map((s:any)=>({headline:s.headline,summary:s.summary,category:s.category,keywords:s.keywords,thread:s.thread,sources:s.sources})))}`,
+    responseFormat:"json_object", temperature:0.55,
+  });
+  const parsed=JSON.parse(result.content);
+  const assets=Array.isArray(parsed?.assets)?parsed.assets:[];
+  return {...data,stories:data.stories.map((s:any,i:number)=>({...s,
+    graphic_prompt:assets[i]?.graphic_prompt||s.graphic_prompt||"",
+    alt_text:assets[i]?.alt_text||s.alt_text||"",
+    engagement:{
+      reply:assets[i]?.reply||s.engagement?.reply||"",
+      quote_tweet:assets[i]?.quote_tweet||s.engagement?.quote_tweet||"",
+      poll:assets[i]?.poll||s.engagement?.poll||"",
+      blog_expansion:assets[i]?.blog_expansion||s.engagement?.blog_expansion||""
     }
-  ]
+  }))};
 }
-`;
 
-export async function POST(request: Request) {
-  try {
-    let requestedProvider: "auto" | "gemini" | "nemotron" = "auto";
-    try {
-      const body = await request.json();
-      if (["auto", "gemini", "nemotron"].includes(body?.provider)) requestedProvider = body.provider;
-    } catch {}
-
-    const result = await generateWithLLM({
-      provider: requestedProvider,
-      system: SYSTEM_PROMPT,
-      user: "Execute the research protocol. Discover the top 2 high-impact recent stories, score them, and create genuinely different thread, reply, quote-tweet, poll, blog expansion, and visual prompt content for each story. Output strictly valid JSON.",
-      responseFormat: "json_object",
-      temperature: 0.35,
-    });
-
-    const data = JSON.parse(result.content);
-    return NextResponse.json({ ...data, llm_provider: result.provider, llm_model: result.model });
-  } catch (error: any) {
-    console.error("CryptoPulse Generation Error:", error);
-    return NextResponse.json(
-      { error: error.message || "Failed to generate content intelligence." },
-      { status: 500 }
-    );
-  }
+export async function POST(request:Request){
+  try{
+    let provider:"auto"|"gemini"|"nemotron"="auto";
+    try{const body=await request.json();if(["auto","gemini","nemotron"].includes(body?.provider))provider=body.provider;}catch{}
+    const result=await generateWithLLM({provider,system:SYSTEM_PROMPT,user:`Research the latest high-impact crypto/Web3 stories, select the top two, generate an X thread/single post plus metadata. ${SCHEMA}`,responseFormat:"json_object",temperature:0.25});
+    let data=JSON.parse(result.content);
+    try{data=await enrichFormats(data,result.provider);}catch(error){console.error("Format enrichment failed",error);}
+    return NextResponse.json({...data,llm_provider:result.provider,llm_model:result.model});
+  }catch(error:any){console.error("CryptoPulse Generation Error:",error);return NextResponse.json({error:error.message||"Failed to generate content intelligence."},{status:500});}
 }
