@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import "./light-theme.css";
+import PublishNav from "./publish-nav";
 
 export const metadata: Metadata = {
   title: "CryptoPulse AI Dashboard",
@@ -14,7 +15,10 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body>
+        {children}
+        <PublishNav />
+      </body>
     </html>
   );
 }
