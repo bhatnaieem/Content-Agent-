@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { generateWithLLM } from "../../../../lib/llm";
+import { generateWithLLM } from "../../../lib/llm";
 
 export const maxDuration = 60;
 
