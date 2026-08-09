@@ -53,7 +53,7 @@ const between = (text: string, tag: string) => {
 };
 
 function parseFeed(xml: string, source: string): ResearchItem[] {
-  const blocks = xml.match(/<item[\\s\\S]*?<\\/item>/gi) || xml.match(/<entry[\\s\\S]*?<\\/entry>/gi) || [];
+  const blocks = xml.match(/<item[\s\S]*?<\/item>/gi) || xml.match(/<entry[\s\S]*?<\/entry>/gi) || [];
   return blocks.slice(0, 30).map((block, index) => {
     const title = between(block, "title");
     const summary = between(block, "description") || between(block, "summary") || between(block, "content");
@@ -108,12 +108,12 @@ export function detectNarratives(items: ResearchItem[]): Narrative[] {
     const key = item.category || "Emerging";
     groups.set(key, [...(groups.get(key) || []), item]);
   }
-  return [...groups.entries()].map(([name, stories]) => ({
+  return Array.from(groups.entries()).map(([name, stories]) => ({
     name,
     count: stories.length,
     score: Math.round(stories.reduce((sum, item) => sum + item.scores.overall, 0) / stories.length),
     momentum: Math.round(stories.reduce((sum, item) => sum + item.scores.momentum, 0) / stories.length),
-    keywords: [...new Set(stories.flatMap(item => item.keywords))].slice(0, 8),
+    keywords: Array.from(new Set(stories.flatMap(item => item.keywords))).slice(0, 8),
     stories: stories.slice(0, 5).map(item => item.id),
   })).sort((a, b) => b.score - a.score);
 }
@@ -135,7 +135,7 @@ export async function runResearch(): Promise<{ items: ResearchItem[]; narratives
     const key = item.title.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
     seen.set(key, (seen.get(key) || 0) + 1);
   }
-  const unique = [...new Map(raw.map(item => [item.title.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim(), item])).values()];
+  const unique = Array.from(new Map(raw.map(item => [item.title.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim(), item])).values());
   unique.forEach(item => score(item, seen.get(item.title.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()) || 1));
   unique.sort((a, b) => b.scores.overall - a.scores.overall);
   return {
