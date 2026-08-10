@@ -46,9 +46,11 @@ Return ONLY JSON with keys reply, quote_tweet, poll, blog_expansion, creative, a
 function clientContext(client?: ClientProfile): string { if (!client) return ""; return ["", "CLIENT PROFILE", `Name: ${client.name || ""}`, `Description: ${client.description || ""}`, `Sector: ${client.sector || ""}`, `Chains/ecosystems: ${client.chains || ""}`, `Priority topics: ${client.topics || ""}`, `Competitors: ${client.competitors || ""}`, `Audience: ${client.audience || ""}`, `Tone: ${client.tone || ""}`, `PR objectives: ${client.objectives || ""}`, `Avoid/guardrails: ${client.avoid || ""}`].join("\n"); }
 
 function normalizeStory(story: any, currentDate: string, candidateMap: Map<string, FreshCandidate>): Story | null {
-  const candidateIds = Array.isArray(story?.candidate_ids) ? Array.from(new Set(story.candidate_ids.filter((id: unknown): id is string => typeof id === "string" && candidateMap.has(id)))) : [];
+  const candidateIds: string[] = Array.isArray(story?.candidate_ids)
+    ? Array.from(new Set((story.candidate_ids as unknown[]).filter((id): id is string => typeof id === "string" && candidateMap.has(id))))
+    : [];
   if (!candidateIds.length) return null;
-  const supported = candidateIds.map((id) => candidateMap.get(id)!).filter(Boolean);
+  const supported: FreshCandidate[] = candidateIds.map((id) => candidateMap.get(id)).filter((item): item is FreshCandidate => Boolean(item));
   const sourceDetails: SourceDetail[] = supported.map((item) => ({ name: item.source, url: item.url, published_at: item.publishedAt }));
   return { ...story, date: currentDate, candidate_ids: candidateIds, sources: sourceDetails.map((item) => item.url), source_details: sourceDetails };
 }
@@ -63,7 +65,6 @@ export async function POST(request: Request) {
     const cutoffMs = now.getTime() - 48 * 60 * 60 * 1000;
     const cutoffUtc = new Date(cutoffMs).toISOString();
 
-    // Generation is grounded in the application's live research engine.
     const researchFeed = await runResearch();
     const freshCandidates: FreshCandidate[] = researchFeed.items
       .filter((item) => { const t = new Date(item.publishedAt).getTime(); return Number.isFinite(t) && t >= cutoffMs && t <= now.getTime(); })
@@ -82,8 +83,6 @@ export async function POST(request: Request) {
     const data = JSON.parse(research.content);
     const stories: Story[] = Array.isArray(data.stories) ? data.stories.map((story: any) => normalizeStory(story, currentDate, candidateMap)).filter((story: Story | null): story is Story => Boolean(story)) : [];
 
-    // Hard post-generation guard: source dates are rebuilt from server-validated candidates.
-    // Model-supplied URLs/dates are never trusted and cannot make an old story look current.
     const freshStories = stories.filter((story) => story.candidate_ids?.every((id) => {
       const candidate = candidateMap.get(id);
       if (!candidate) return false;
