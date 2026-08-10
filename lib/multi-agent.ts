@@ -3,90 +3,15 @@ import { generateWithLLM } from "@/lib/llm";
 
 type AgentStatus = "completed" | "degraded";
 export type AgentReport = { name: string; role: string; status: AgentStatus; findings: string[]; itemIds: string[] };
-export type MultiAgentPacket = {
-  generated_at_utc: string;
-  current_date: string;
-  candidates: ResearchItem[];
-  narratives: Narrative[];
-  agents: AgentReport[];
-  priority_focus: string[];
-  verification: { verified: number; needs_review: number; rejected: number };
-};
-
-const PRIORITY = ["Exploits & Hacks", "Airdrops", "Airdrop Guides"];
-const securityTerms = /(exploit|hack|hacked|drain|drained|attack|vulnerability|vulnerable|breach|stolen|flash loan|bridge attack|private key|contract bug)/i;
-const airdropTerms = /(airdrop|airdrop campaign|token claim|claim window|snapshot|points program|retroactive|testnet|quest|points|eligib)/i;
-const actionTerms = /(claim|eligible|eligibility|deadline|snapshot|testnet|quest|points|how to|guide|steps)/i;
-
-function top(items: ResearchItem[], predicate: (item: ResearchItem) => boolean, limit = 8) {
-  return items.filter(predicate).sort((a, b) => b.scores.overall - a.scores.overall).slice(0, limit);
-}
-
-function scoutAgent(items: ResearchItem[]): AgentReport {
-  const selected = [...items].sort((a, b) => b.scores.overall - a.scores.overall).slice(0, 12);
-  return { name: "Scout Agent", role: "Find fresh high-signal Web3 developments", status: selected.length ? "completed" : "degraded", findings: [`Reviewed ${items.length} fresh research candidates.`, `Shortlisted ${selected.length} candidates for specialist review.`], itemIds: selected.map(i => i.id) };
-}
-
-function airdropAgent(items: ResearchItem[]): AgentReport {
-  const selected = top(items, i => i.category === "Airdrops" || i.category === "Airdrop Guides" || airdropTerms.test(`${i.title} ${i.summary}`));
-  return { name: "Airdrop Agent", role: "Detect actionable airdrops, claims, points, quests and guides", status: selected.length ? "completed" : "degraded", findings: [`Found ${selected.length} airdrop-related candidates.`, selected[0] ? `Top opportunity: ${selected[0].title}` : "No current airdrop opportunity met the freshness filter."], itemIds: selected.map(i => i.id) };
-}
-
-function securityAgent(items: ResearchItem[]): AgentReport {
-  const selected = top(items, i => i.category === "Exploits & Hacks" || securityTerms.test(`${i.title} ${i.summary}`));
-  return { name: "Security Agent", role: "Detect exploits, hacks, vulnerabilities and user-impacting incidents", status: selected.length ? "completed" : "degraded", findings: [`Found ${selected.length} security-related candidates.`, selected[0] ? `Top security signal: ${selected[0].title}` : "No current security incident met the freshness filter."], itemIds: selected.map(i => i.id) };
-}
-
-function socialAgent(items: ResearchItem[]): AgentReport {
-  const social = items.filter(i => i.source === "Reddit" || i.source === "X").sort((a, b) => (b.community?.score || 0) - (a.community?.score || 0));
-  return { name: "Social Signal Agent", role: "Combine Reddit and X web signals into narrative momentum", status: social.length ? "completed" : "degraded", findings: [`Collected ${social.length} social-signal candidates.`, `Highest social signal: ${social[0]?.community?.score ?? 0}/100.`], itemIds: social.slice(0, 10).map(i => i.id) };
-}
-
-async function verificationAgent(items: ResearchItem[]): Promise<{ report: AgentReport; verified: number; needs_review: number; rejected: number }> {
-  const verified: ResearchItem[] = [];
-  const review: ResearchItem[] = [];
-  const rejected: ResearchItem[] = [];
-  for (const item of items) {
-    const date = new Date(item.publishedAt).getTime();
-    const fresh = Number.isFinite(date) && date >= Date.now() - 48 * 60 * 60 * 1000 && date <= Date.now() + 15 * 60 * 1000;
-    const hasSource = Boolean(item.url && item.source);
-    const isPriority = PRIORITY.includes(item.category) || securityTerms.test(`${item.title} ${item.summary}`) || airdropTerms.test(`${item.title} ${item.summary}`);
-    if (!fresh || !hasSource) rejected.push(item);
-    else if (isPriority && (item.source === "Reddit" || item.source === "X")) review.push(item);
-    else verified.push(item);
-  }
-  const report: AgentReport = { name: "Verification Agent", role: "Gate freshness, provenance and risk before content generation", status: verified.length || review.length ? "completed" : "degraded", findings: [`Verified ${verified.length} candidates.`, `${review.length} social-signal candidates need source confirmation.`, `Rejected ${rejected.length} stale or incomplete candidates.`], itemIds: [...verified, ...review].map(i => i.id) };
-  return { report, verified: verified.length, needs_review: review.length, rejected: rejected.length };
-}
-
-async function strategistAgent(items: ResearchItem[], narratives: Narrative[]): Promise<{ report: AgentReport; selected: ResearchItem[] }> {
-  const priority = top(items, i => i.category === "Exploits & Hacks" || i.category === "Airdrops" || i.category === "Airdrop Guides" || securityTerms.test(`${i.title} ${i.summary}`) || airdropTerms.test(`${i.title} ${i.summary}`), 12);
-  const fallback = [...items].sort((a, b) => b.scores.overall - a.scores.overall).slice(0, 12);
-  const pool = priority.length ? priority : fallback;
-  const selectionPrompt = `You are the Web3 Pulse Strategist Agent. Select the two strongest current opportunities from the supplied VERIFIED candidates. Prioritize exploits/hacks, then airdrops, then airdrop guides. Never select a candidate outside the supplied list. Never invent facts. Reject generic news when a strong priority candidate exists. Return JSON: {"selected_ids":["id1","id2"],"reason":"..."}.\n\nCURRENT DATE: ${new Date().toISOString().slice(0,10)}\nCANDIDATES:\n${JSON.stringify(pool.map(i => ({ id:i.id,title:i.title,category:i.category,summary:i.summary,source:i.source,url:i.url,publishedAt:i.publishedAt,score:i.scores.overall,community:i.community })))}`;
-  try {
-    const result = await generateWithLLM({ provider: "auto", system: "You are a strict Web3 editorial strategist. Work only from supplied candidates.", user: selectionPrompt, responseFormat: "json_object", temperature: 0.1 });
-    const parsed = JSON.parse(result.content);
-    const ids = Array.isArray(parsed.selected_ids) ? parsed.selected_ids.filter((id: unknown): id is string => typeof id === "string") : [];
-    const selected = ids.map(id => pool.find(i => i.id === id)).filter((i): i is ResearchItem => Boolean(i)).slice(0, 2);
-    const final = selected.length ? selected : pool.slice(0, 2);
-    return { selected: final, report: { name: "Strategist Agent", role: "Select the highest-value current opportunities", status: "completed", findings: [`Compared ${pool.length} high-priority candidates.`, `Selected ${final.length} stories for content generation.`, `Narratives considered: ${narratives.slice(0, 5).map(n => n.name).join(", ") || "none"}.`], itemIds: final.map(i => i.id) } };
-  } catch {
-    const final = pool.slice(0, 2);
-    return { selected: final, report: { name: "Strategist Agent", role: "Select the highest-value current opportunities", status: "degraded", findings: [`LLM strategy selection unavailable; deterministic priority scoring selected ${final.length} candidates.`], itemIds: final.map(i => i.id) } };
-  }
-}
-
-export async function runMultiAgentResearch(): Promise<MultiAgentPacket> {
-  const research = await runResearch();
-  const items = research.items;
-  const scout = scoutAgent(items);
-  const airdrop = airdropAgent(items);
-  const security = securityAgent(items);
-  const social = socialAgent(items);
-  const verification = await verificationAgent(items);
-  const verifiedItems = items.filter(item => verification.report.itemIds.includes(item.id));
-  const strategy = await strategistAgent(verifiedItems, research.narratives);
-  const agents = [scout, airdrop, security, social, verification.report, strategy.report];
-  return { generated_at_utc: research.generatedAt, current_date: research.generatedAt.slice(0, 10), candidates: strategy.selected, narratives: research.narratives, agents, priority_focus: PRIORITY, verification: { verified: verification.verified, needs_review: verification.needs_review, rejected: verification.rejected } };
-}
+export type MultiAgentPacket = { generated_at_utc:string; current_date:string; candidates:ResearchItem[]; narratives:Narrative[]; agents:AgentReport[]; priority_focus:string[]; verification:{verified:number;needs_review:number;rejected:number} };
+const PRIORITY=["Exploits & Hacks","Airdrops","Airdrop Guides"];
+const securityTerms=/(exploit|hack|hacked|drain|drained|attack|vulnerability|vulnerable|breach|stolen|flash loan|bridge attack|private key|contract bug)/i;
+const airdropTerms=/(airdrop|airdrop campaign|token claim|claim window|snapshot|points program|retroactive|testnet|quest|points|eligib)/i;
+function top(items:ResearchItem[],predicate:(item:ResearchItem)=>boolean,limit=8){return items.filter(predicate).sort((a,b)=>b.scores.overall-a.scores.overall).slice(0,limit)}
+function scoutAgent(items:ResearchItem):AgentReport{return {name:"Scout Agent",role:"Find fresh high-signal Web3 developments",status:items.length?"completed":"degraded",findings:[`Reviewed ${items.length} fresh research candidates.`,`Shortlisted ${Math.min(12,items.length)} candidates for specialist review.`],itemIds:[...items].sort((a,b)=>b.scores.overall-a.scores.overall).slice(0,12).map(i=>i.id)}}
+function airdropAgent(items:ResearchItem[]):AgentReport{const selected=top(items,i=>i.category==="Airdrops"||i.category==="Airdrop Guides"||airdropTerms.test(`${i.title} ${i.summary}`));return {name:"Airdrop Agent",role:"Detect actionable airdrops, claims, points, quests and guides",status:selected.length?"completed":"degraded",findings:[`Found ${selected.length} airdrop-related candidates.`,selected[0]?`Top opportunity: ${selected[0].title}`:"No current airdrop opportunity met the freshness filter."],itemIds:selected.map(i=>i.id)}}
+function securityAgent(items:ResearchItem[]):AgentReport{const selected=top(items,i=>i.category==="Exploits & Hacks"||securityTerms.test(`${i.title} ${i.summary}`));return {name:"Security Agent",role:"Detect exploits, hacks, vulnerabilities and user-impacting incidents",status:selected.length?"completed":"degraded",findings:[`Found ${selected.length} security-related candidates.`,selected[0]?`Top security signal: ${selected[0].title}`:"No current security incident met the freshness filter."],itemIds:selected.map(i=>i.id)}}
+function socialAgent(items:ResearchItem[]):AgentReport{const social=items.filter(i=>i.source==="Reddit"||i.source==="X").sort((a,b)=>(b.community?.score||0)-(a.community?.score||0));return {name:"Social Signal Agent",role:"Combine Reddit and X web signals into narrative momentum",status:social.length?"completed":"degraded",findings:[`Collected ${social.length} social-signal candidates.`,`Highest social signal: ${social[0]?.community?.score??0}/100.`],itemIds:social.slice(0,10).map(i=>i.id)}}
+async function verificationAgent(items:ResearchItem[]):Promise<{report:AgentReport;verified:number;needs_review:number;rejected:number}>{const verified:ResearchItem[]=[];const review:ResearchItem[]=[];const rejected:ResearchItem[]=[];for(const item of items){const date=new Date(item.publishedAt).getTime();const fresh=Number.isFinite(date)&&date>=Date.now()-48*60*60*1000&&date<=Date.now()+15*60*1000;const hasSource=Boolean(item.url&&item.source);const isPriority=PRIORITY.includes(item.category)||securityTerms.test(`${item.title} ${item.summary}`)||airdropTerms.test(`${item.title} ${item.summary}`);if(!fresh||!hasSource)rejected.push(item);else if(isPriority&&(item.source==="Reddit"||item.source==="X"))review.push(item);else verified.push(item)}const report={name:"Verification Agent",role:"Gate freshness, provenance and risk before content generation",status:(verified.length||review.length)?"completed":"degraded",findings:[`Verified ${verified.length} candidates.`,`${review.length} social-signal candidates need source confirmation.`,`Rejected ${rejected.length} stale or incomplete candidates.`],itemIds:[...verified,...review].map(i=>i.id)} as AgentReport;return {report,verified:verified.length,needs_review:review.length,rejected:rejected.length}}
+async function strategistAgent(items:ResearchItem[],narratives:Narrative[]):Promise<{report:AgentReport;selected:ResearchItem[]}>{const priority=top(items,i=>i.category==="Exploits & Hacks"||i.category==="Airdrops"||i.category==="Airdrop Guides"||securityTerms.test(`${i.title} ${i.summary}`)||airdropTerms.test(`${i.title} ${i.summary}`),12);const fallback=[...items].sort((a,b)=>b.scores.overall-a.scores.overall).slice(0,12);const pool=priority.length?priority:fallback;const selectionPrompt=`You are the Web3 Pulse Strategist Agent. Select the two strongest current opportunities from the supplied VERIFIED candidates. Prioritize exploits/hacks, then airdrops, then airdrop guides. Never select a candidate outside the supplied list. Never invent facts. Reject generic news when a strong priority candidate exists. Return JSON: {"selected_ids":["id1","id2"],"reason":"..."}.\n\nCURRENT DATE: ${new Date().toISOString().slice(0,10)}\nCANDIDATES:\n${JSON.stringify(pool.map(i=>({id:i.id,title:i.title,category:i.category,summary:i.summary,source:i.source,url:i.url,publishedAt:i.publishedAt,score:i.scores.overall,community:i.community})))}`;try{const result=await generateWithLLM({provider:"auto",system:"You are a strict Web3 editorial strategist. Work only from supplied candidates.",user:selectionPrompt,responseFormat:"json_object",temperature:0.1});const parsed=JSON.parse(result.content);const ids:string[]=Array.isArray(parsed?.selected_ids)?parsed.selected_ids.filter((id:unknown):id is string=>typeof id==="string"):[];const selected:ResearchItem[]=ids.map((id:string)=>pool.find(i=>i.id===id)).filter((i):i is ResearchItem=>Boolean(i)).slice(0,2);const final=selected.length?selected:pool.slice(0,2);return {selected:final,report:{name:"Strategist Agent",role:"Select the highest-value current opportunities",status:"completed",findings:[`Compared ${pool.length} high-priority candidates.`,`Selected ${final.length} stories for content generation.`,`Narratives considered: ${narratives.slice(0,5).map(n=>n.name).join(", ")||"none"}.`],itemIds:final.map(i=>i.id)}}}catch{const final=pool.slice(0,2);return {selected:final,report:{name:"Strategist Agent",role:"Select the highest-value current opportunities",status:"degraded",findings:[`LLM strategy selection unavailable; deterministic priority scoring selected ${final.length} candidates.`],itemIds:final.map(i=>i.id)}}}}
+export async function runMultiAgentResearch():Promise<MultiAgentPacket>{const research=await runResearch();const items=research.items;const scout=scoutAgent(items);const airdrop=airdropAgent(items);const security=securityAgent(items);const social=socialAgent(items);const verification=await verificationAgent(items);const verifiedItems=items.filter(item=>verification.report.itemIds.includes(item.id));const strategy=await strategistAgent(verifiedItems,research.narratives);return {generated_at_utc:research.generatedAt,current_date:research.generatedAt.slice(0,10),candidates:strategy.selected,narratives:research.narratives,agents:[scout,airdrop,security,social,verification.report,strategy.report],priority_focus:PRIORITY,verification:{verified:verification.verified,needs_review:verification.needs_review,rejected:verification.rejected}}}
