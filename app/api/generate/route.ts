@@ -6,27 +6,31 @@ export const maxDuration = 60;
 
 type SourceDetail = { name: string; url: string; published_at: string };
 type ClientProfile = { name?: string; description?: string; sector?: string; chains?: string; topics?: string; competitors?: string; audience?: string; tone?: string; objectives?: string; avoid?: string };
-type Story = { headline: string; category: string; score: number; format: "thread" | "single post"; reason: string; summary: string; keywords: string[]; hashtags: string[]; sources: string[]; source_details?: SourceDetail[]; posting_time_utc: string; cta: string; graphic_prompt: string; alt_text: string; thread: { title: string; tweets: string[] }; engagement?: { reply: string; quote_tweet: string; poll: string; blog_expansion: string } };
+type Story = { headline: string; category: string; score: number; format: "thread" | "single post"; reason: string; summary: string; keywords: string[]; hashtags: string[]; sources: string[]; source_details?: SourceDetail[]; posting_time_utc: string; cta: string; graphic_prompt: string; alt_text: string; thread: { title: string; tweets: string[] }; engagement?: { reply: string; quote_tweet: string; poll: string; blog_expansion: string }; candidate_ids?: string[] };
+type FreshCandidate = { id: string; title: string; url: string; source: string; publishedAt: string; summary: string; category: string; keywords: string[]; score: number; opportunity: string };
 
 const RESEARCH_PROMPT = `You are Web3 Pulse, a Web3 PR research and content intelligence agent.
-You are NOT allowed to independently invent or recall stories. The application supplies a FRESH RESEARCH CANDIDATE SET below. Your job is to select and transform only those candidates into content opportunities.
+You are NOT allowed to independently invent, recall, or search for stories. The application supplies a FRESH RESEARCH CANDIDATE SET below. Select and transform ONLY those candidates into content opportunities.
 
 DATE FRESHNESS — ABSOLUTE RULE:
-CURRENT_DATE and CUTOFF_UTC are authoritative. Only select candidates whose supplied publishedAt is inside the freshness window. Do not use model memory to add older events. Do not turn a 2024/2025/2026-old event into a current story unless the supplied candidate itself contains a clearly dated new update inside the window.
-If there are not two valid candidates, return fewer stories rather than inventing stories. Never fabricate a source, URL, publication date, exploit, airdrop, eligibility requirement, claim link, victim, amount or deadline.
+CURRENT_DATE and CUTOFF_UTC are authoritative. Only select candidates whose supplied publishedAt is inside the freshness window. Never use model memory to add older events. Do not turn a 2024/2025/older 2026 event into a current story unless the supplied candidate itself is a clearly dated new update inside the window.
+If there are not enough valid candidates, return fewer stories rather than inventing stories. Never fabricate a source, URL, publication date, exploit, airdrop, eligibility requirement, claim link, victim, amount or deadline.
+
+SOURCE GROUNDING — ABSOLUTE RULE:
+Every story MUST contain candidate_ids using IDs copied EXACTLY from the supplied candidates. Use one or more supplied candidate IDs that directly support the story. Do not invent IDs. The application will rebuild source details from those IDs, so do not substitute remembered URLs or dates.
 
 CONTENT PRIORITY:
 1. EXPLOITS & HACKS — highest priority.
 2. AIRDROPS — very high priority.
 3. AIRDROP GUIDES — very high priority.
 4. OTHER HIGH-INTEREST WEB3 — only if the supplied fresh candidates do not provide enough priority stories.
-Prefer 2 priority stories when genuinely supported by the supplied candidates. Generic crypto news is a fallback, not the default.
+Prefer priority stories when genuinely supported by supplied candidates. Generic crypto news is a fallback, not the default.
 
-For airdrops: only state eligibility, claims, points, quests, testnets, deadlines and official links when supported by the supplied candidate/source details. Clearly label uncertainty.
-For exploits/hacks: only state affected protocol, impact, losses, attacker details, status and recommended user action when supported by the supplied candidates/source details.
+For airdrops: only state eligibility, claims, points, quests, testnets, deadlines and official links when supported by supplied candidates. Clearly label uncertainty.
+For exploits/hacks: only state affected protocol, impact, losses, attacker details, status and recommended user action when supported by supplied candidates.
 
-Return strict JSON using only supplied candidate facts. Preserve real source dates and URLs.
-Schema: {"date":"CURRENT_DATE","generated_at_utc":"ISO","stories":[{"headline":"","category":"Airdrops|Airdrop Guides|Exploits & Hacks|Other","score":0,"format":"thread|single post","reason":"","summary":"","keywords":[],"hashtags":[],"sources":[],"source_details":[{"name":"","url":"","published_at":"ISO or YYYY-MM-DD or empty"}],"posting_time_utc":"","cta":"","graphic_prompt":"","alt_text":"","thread":{"title":"","tweets":[]}}]}`;
+Return strict JSON using only supplied candidate facts.
+Schema: {"date":"CURRENT_DATE","generated_at_utc":"ISO","stories":[{"candidate_ids":["EXACT_SUPPLIED_ID"],"headline":"","category":"Airdrops|Airdrop Guides|Exploits & Hacks|Other","score":0,"format":"thread|single post","reason":"","summary":"","keywords":[],"hashtags":[],"sources":[],"source_details":[],"posting_time_utc":"","cta":"","graphic_prompt":"","alt_text":"","thread":{"title":"","tweets":[]}}]}`;
 
 const FORMAT_PROMPT = `You are the Web3 Pulse Content Studio.
 Create six genuinely different assets from the supplied CURRENT story. Use only the supplied facts and dates. Do not introduce old facts, invented claims or unrelated historical context as if current.
@@ -39,9 +43,15 @@ ALT_TEXT: concise accessibility description.
 If the story is an airdrop, make content practical and clearly separate confirmed eligibility/claim information from speculation. If it is an exploit/hack, prioritize verified facts, user safety and current status.
 Return ONLY JSON with keys reply, quote_tweet, poll, blog_expansion, creative, alt_text.`;
 
-function cleanSourceDetails(value: unknown): SourceDetail[] { if (!Array.isArray(value)) return []; return value.filter((item) => item && typeof item === "object").map((item) => { const x = item as Record<string, unknown>; return { name: typeof x.name === "string" ? x.name.trim() : "", url: typeof x.url === "string" && /^https?:\/\//i.test(x.url.trim()) ? x.url.trim() : "", published_at: typeof x.published_at === "string" ? x.published_at.trim() : "" }; }).filter((item) => item.name || item.url || item.published_at); }
-function normalizeStory(story: any, currentDate: string): Story { const sourceDetails = cleanSourceDetails(story?.source_details); const legacySources = Array.isArray(story?.sources) ? story.sources.filter((item: unknown) => typeof item === "string") : []; return { ...story, date: currentDate, sources: legacySources.length ? legacySources : sourceDetails.map((item) => item.url || item.name).filter(Boolean), source_details: sourceDetails }; }
 function clientContext(client?: ClientProfile): string { if (!client) return ""; return ["", "CLIENT PROFILE", `Name: ${client.name || ""}`, `Description: ${client.description || ""}`, `Sector: ${client.sector || ""}`, `Chains/ecosystems: ${client.chains || ""}`, `Priority topics: ${client.topics || ""}`, `Competitors: ${client.competitors || ""}`, `Audience: ${client.audience || ""}`, `Tone: ${client.tone || ""}`, `PR objectives: ${client.objectives || ""}`, `Avoid/guardrails: ${client.avoid || ""}`].join("\n"); }
+
+function normalizeStory(story: any, currentDate: string, candidateMap: Map<string, FreshCandidate>): Story | null {
+  const candidateIds = Array.isArray(story?.candidate_ids) ? Array.from(new Set(story.candidate_ids.filter((id: unknown): id is string => typeof id === "string" && candidateMap.has(id)))) : [];
+  if (!candidateIds.length) return null;
+  const supported = candidateIds.map((id) => candidateMap.get(id)!).filter(Boolean);
+  const sourceDetails: SourceDetail[] = supported.map((item) => ({ name: item.source, url: item.url, published_at: item.publishedAt }));
+  return { ...story, date: currentDate, candidate_ids: candidateIds, sources: sourceDetails.map((item) => item.url), source_details: sourceDetails };
+}
 
 export async function POST(request: Request) {
   try {
@@ -50,13 +60,13 @@ export async function POST(request: Request) {
     const provider = ["auto", "gemini", "nemotron"].includes(body.provider || "") ? (body.provider as "auto" | "gemini" | "nemotron") : "auto";
     const now = new Date();
     const currentDate = now.toISOString().slice(0, 10);
-    const cutoffUtc = new Date(now.getTime() - 48 * 60 * 60 * 1000).toISOString();
+    const cutoffMs = now.getTime() - 48 * 60 * 60 * 1000;
+    const cutoffUtc = new Date(cutoffMs).toISOString();
 
-    // IMPORTANT: generation is now grounded in the application's live research engine.
-    // The LLM never gets a blank "find the latest news" task, which previously allowed stale model memory to leak into output.
+    // Generation is grounded in the application's live research engine.
     const researchFeed = await runResearch();
-    const freshCandidates = researchFeed.items
-      .filter((item) => { const t = new Date(item.publishedAt).getTime(); return Number.isFinite(t) && t >= new Date(cutoffUtc).getTime() && t <= now.getTime(); })
+    const freshCandidates: FreshCandidate[] = researchFeed.items
+      .filter((item) => { const t = new Date(item.publishedAt).getTime(); return Number.isFinite(t) && t >= cutoffMs && t <= now.getTime(); })
       .slice(0, 24)
       .map((item) => ({ id: item.id, title: item.title, url: item.url, source: item.source, publishedAt: item.publishedAt, summary: item.summary, category: item.category, keywords: item.keywords, score: item.scores.overall, opportunity: item.opportunity }));
 
@@ -64,18 +74,22 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "No fresh research candidates were found in the last 48 hours. Web3 Pulse will not generate stale or invented content.", date: currentDate, cutoff_utc: cutoffUtc, sources: researchFeed.sources }, { status: 503 });
     }
 
-    const freshnessContext = [`CURRENT_DATE: ${currentDate}`, `CURRENT_TIME_UTC: ${now.toISOString()}`, `CUTOFF_UTC: ${cutoffUtc}`, "Only use supplied candidates inside this freshness window. Do not use model memory for current events.", "A candidate's publishedAt is the authoritative freshness timestamp.", "If candidate evidence is insufficient, omit the story rather than filling gaps with historical knowledge."].join("\n");
+    const candidateMap = new Map(freshCandidates.map((candidate) => [candidate.id, candidate]));
+    const freshnessContext = [`CURRENT_DATE: ${currentDate}`, `CURRENT_TIME_UTC: ${now.toISOString()}`, `CUTOFF_UTC: ${cutoffUtc}`, "Only use supplied candidates inside this freshness window. Do not use model memory for current events.", "A candidate's publishedAt is the authoritative freshness timestamp.", "Every story must reference one or more supplied candidate_ids. If evidence is insufficient, omit the story rather than filling gaps with historical knowledge."].join("\n");
     const candidateContext = `FRESH RESEARCH CANDIDATES (${freshCandidates.length}):\n${JSON.stringify(freshCandidates, null, 2)}`;
 
     const research = await generateWithLLM({ provider, system: RESEARCH_PROMPT, user: `${freshnessContext}\n\n${candidateContext}\n\nSelect the strongest current opportunities from ONLY these candidates. Strongly prioritize exploits/hacks, airdrops and actionable airdrop guides. Return strict JSON.` + clientContext(body.clientProfile), responseFormat: "json_object", temperature: 0.15 });
     const data = JSON.parse(research.content);
-    const stories: Story[] = Array.isArray(data.stories) ? data.stories.map((story: any) => normalizeStory(story, currentDate)) : [];
+    const stories: Story[] = Array.isArray(data.stories) ? data.stories.map((story: any) => normalizeStory(story, currentDate, candidateMap)).filter((story: Story | null): story is Story => Boolean(story)) : [];
 
-    // Hard post-generation guard: discard stories whose supplied source dates are outside the freshness window.
-    const freshStories = stories.filter((story) => {
-      const dates = (story.source_details || []).map((s) => Date.parse(s.published_at)).filter(Number.isFinite);
-      return dates.length === 0 || dates.some((d) => d >= new Date(cutoffUtc).getTime() && d <= now.getTime());
-    });
+    // Hard post-generation guard: source dates are rebuilt from server-validated candidates.
+    // Model-supplied URLs/dates are never trusted and cannot make an old story look current.
+    const freshStories = stories.filter((story) => story.candidate_ids?.every((id) => {
+      const candidate = candidateMap.get(id);
+      if (!candidate) return false;
+      const t = Date.parse(candidate.publishedAt);
+      return Number.isFinite(t) && t >= cutoffMs && t <= now.getTime();
+    }));
 
     const enriched = await Promise.all(freshStories.map(async (story) => {
       try {
