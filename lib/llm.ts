@@ -22,7 +22,7 @@ function clientFor(provider:Exclude<Provider,"auto">){
 function modelFor(provider:Exclude<Provider,"auto">){
   if(provider==="gemini") return process.env.GEMINI_MODEL||"gemini-3.6-flash";
   if(provider==="nemotron") return process.env.NEMOTRON_MODEL||"nvidia/nemotron-3-ultra-253b-v1";
-  return process.env.OPENROUTER_MODEL||"openrouter/free";
+  return process.env.OPENROUTER_MODEL||"openai/gpt-oss-20b:free";
 }
 function isRateLimited(error:unknown){const e=error as {status?:number;code?:string;message?:string}|undefined;return e?.status===429||e?.code==="429"||/rate.?limit|quota|too many requests/i.test(e?.message||"");}
 
