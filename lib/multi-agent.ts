@@ -1,18 +1,209 @@
 import { runResearch, type ResearchItem, type Narrative } from "@/lib/research-engine";
+
 type AgentStatus = "completed" | "degraded";
-export type AgentReport = { name: string; role: string; status: AgentStatus; findings: string[]; itemIds: string[] };
-export type MultiAgentPacket = { generated_at_utc:string; current_date:string; candidates:ResearchItem[]; narratives:Narrative[]; agents:AgentReport[]; priority_focus:string[]; verification:{verified:number;needs_review:number;rejected:number}; source_health:Array<{name:string;discovered:number;status:string;url:string}>; raw_candidate_count:number; fresh_candidate_count:number };
-const PRIORITY=["Exploits & Hacks","Airdrops","Airdrop Guides"];
-const FALLBACK=["AI & Agentic","DeFi","Ethereum","Bitcoin","Infrastructure","Institutions","Regulation","Memecoins","Emerging"];
-const securityTerms=/(exploit|hack|hacked|drain|drained|attack|vulnerability|vulnerable|breach|stolen|flash loan|bridge attack|private key|contract bug)/i;
-const airdropTerms=/(airdrop|airdrop campaign|token claim|claim window|snapshot|points program|retroactive|testnet|quest|points|eligib)/i;
-const aiTerms=/(\bai\b|artificial intelligence|agentic|ai agent|ai agents|autonomous agent|machine learning|inference|llm|model)/i;
-function top(items:ResearchItem[],predicate:(item:ResearchItem)=>boolean,limit=8){return items.filter(predicate).sort((a,b)=>b.scores.overall-a.scores.overall).slice(0,limit)}
-function scoutAgent(items:ResearchItem[]):AgentReport{return {name:"Scout Agent",role:"Find fresh high-signal Web3 developments",status:items.length?"completed":"degraded",findings:[`Reviewed ${items.length} fresh research candidates.`,`Shortlisted ${Math.min(20,items.length)} candidates for specialist review.`],itemIds:items.slice().sort((a,b)=>b.scores.overall-a.scores.overall).slice(0,20).map(i=>i.id)}}
-function airdropAgent(items:ResearchItem[]):AgentReport{const selected=top(items,i=>i.category==="Airdrops"||i.category==="Airdrop Guides"||airdropTerms.test(`${i.title} ${i.summary}`));return {name:"Airdrop Agent",role:"Detect actionable airdrops, claims, points, quests and guides",status:selected.length?"completed":"degraded",findings:[`Found ${selected.length} airdrop-related candidates.`,selected[0]?`Top opportunity: ${selected[0].title}`:"No current airdrop opportunity met the freshness filter."],itemIds:selected.map(i=>i.id)}}
-function securityAgent(items:ResearchItem[]):AgentReport{const selected=top(items,i=>i.category==="Exploits & Hacks"||securityTerms.test(`${i.title} ${i.summary}`));return {name:"Security Agent",role:"Detect exploits, hacks, vulnerabilities and user-impacting incidents",status:selected.length?"completed":"degraded",findings:[`Found ${selected.length} security-related candidates.`,selected[0]?`Top security signal: ${selected[0].title}`:"No current security incident met the freshness filter."],itemIds:selected.map(i=>i.id)}}
-function socialAgent(items:ResearchItem[]):AgentReport{const social=items.filter(i=>i.source==="Reddit"||i.source==="X").sort((a,b)=>(b.community?.score||0)-(a.community?.score||0));return {name:"Social Signal Agent",role:"Combine Reddit and X web signals into narrative momentum",status:social.length?"completed":"degraded",findings:[`Collected ${social.length} social-signal candidates.`,`Highest social signal: ${social[0]?.community?.score??0}/100.`],itemIds:social.slice(0,10).map(i=>i.id)}}
-function aiAgent(items:ResearchItem[]):AgentReport{const selected=top(items,i=>i.category==="AI & Agentic"||aiTerms.test(`${i.title} ${i.summary}`));return {name:"AI & Agentic Agent",role:"Find fresh AI, agentic AI and autonomous-agent developments in Web3",status:selected.length?"completed":"degraded",findings:[`Found ${selected.length} AI/agentic candidates.`,selected[0]?`Top AI/agentic signal: ${selected[0].title}`:"No current AI/agentic opportunity met the freshness filter."],itemIds:selected.map(i=>i.id)}}
-async function verificationAgent(items:ResearchItem[]):Promise<{report:AgentReport;verified:number;needs_review:number;rejected:number}>{const verified:ResearchItem[]=[];const review:ResearchItem[]=[];const rejected:ResearchItem[]=[];for(const item of items){const date=new Date(item.publishedAt).getTime();const fresh=Number.isFinite(date)&&date>=Date.now()-72*60*60*1000&&date<=Date.now()+15*60*1000;const hasSource=Boolean(item.url&&item.source);const isPriority=PRIORITY.includes(item.category)||securityTerms.test(`${item.title} ${item.summary}`)||airdropTerms.test(`${item.title} ${item.summary}`);if(!fresh||!hasSource)rejected.push(item);else if(isPriority&&(item.source==="Reddit"||item.source==="X"))review.push(item);else verified.push(item)}const report={name:"Verification Agent",role:"Gate freshness, provenance and risk before content generation",status:(verified.length||review.length)?"completed":"degraded",findings:[`Verified ${verified.length} candidates.`,`${review.length} social-signal candidates need source confirmation.`,`Rejected ${rejected.length} stale or incomplete candidates.`],itemIds:[...verified,...review].map(i=>i.id)} as AgentReport;return {report,verified:verified.length,needs_review:review.length,rejected:rejected.length}}
-function strategistAgent(items:ResearchItem[], excludedIds:Set<string>):{report:AgentReport;selected:ResearchItem[]}{const available=items.filter(i=>!excludedIds.has(i.id));const priority=top(available,i=>PRIORITY.includes(i.category)||securityTerms.test(`${i.title} ${i.summary}`)||airdropTerms.test(`${i.title} ${i.summary}`),15);const selected=[...priority];const selectedIds=new Set(selected.map(i=>i.id));for(const category of FALLBACK){if(selected.length>=40)break;const pool=available.filter(i=>!selectedIds.has(i.id)&&(i.category===category||(category==="AI & Agentic"&&aiTerms.test(`${i.title} ${i.summary}`)))).sort((a,b)=>b.scores.overall-a.scores.overall);for(const item of pool){if(selected.length>=40)break;selected.push(item);selectedIds.add(item.id)}}if(selected.length<40){for(const item of available.slice().sort((a,b)=>b.scores.overall-a.scores.overall)){if(selected.length>=40)break;if(selectedIds.has(item.id))continue;selected.push(item);selectedIds.add(item.id)}}return {selected,report:{name:"Strategist Agent",role:"Build a deep current opportunity pool with priority stories first and AI/agentic fallback",status:selected.length?"completed":"degraded",findings:[`Reviewed ${available.length} eligible verified candidates.`,`Selected ${priority.length} priority candidates first.`,`Built a ${selected.length}-candidate reserve so duplicate-memory filtering can backfill safely.`,`AI/agentic research is included as a fallback lane when the core priority pool is thin.`,`Client-side exclusions are intentionally ignored here; persistent memory filtering happens after research so stale browser state cannot poison the research pool.`],itemIds:selected.map(i=>i.id)}}}
-export async function runMultiAgentResearch(excludedIds:string[]=[]):Promise<MultiAgentPacket>{const research=await runResearch();const items=research.items;const excluded=new Set<string>();const scout=scoutAgent(items);const airdrop=airdropAgent(items);const security=securityAgent(items);const social=socialAgent(items);const ai=aiAgent(items);const verification=await verificationAgent(items);const verifiedItems=items.filter(item=>verification.report.itemIds.includes(item.id));const strategy=strategistAgent(verifiedItems,excluded);return {generated_at_utc:research.generatedAt,current_date:research.generatedAt.slice(0,10),candidates:strategy.selected,narratives:research.narratives,agents:[scout,airdrop,security,social,ai,verification.report,strategy.report],priority_focus:[...PRIORITY,"AI & Agentic"],verification:{verified:verification.verified,needs_review:verification.needs_review,rejected:verification.rejected},source_health:research.sourceHealth||[],raw_candidate_count:research.raw_candidate_count||0,fresh_candidate_count:research.fresh_candidate_count||items.length}}
+export type AgentReport = {
+  name: string;
+  role: string;
+  status: AgentStatus;
+  findings: string[];
+  itemIds: string[];
+};
+
+export type MultiAgentPacket = {
+  generated_at_utc: string;
+  current_date: string;
+  candidates: ResearchItem[];
+  narratives: Narrative[];
+  agents: AgentReport[];
+  priority_focus: string[];
+  verification: { verified: number; needs_review: number; rejected: number };
+  source_health: Array<{ name: string; discovered: number; status: string; url: string }>;
+  raw_candidate_count: number;
+  fresh_candidate_count: number;
+};
+
+const PRIORITY = ["Exploits & Hacks", "Airdrops", "Airdrop Guides"];
+const FALLBACK = ["AI & Agentic", "DeFi", "Ethereum", "Bitcoin", "Infrastructure", "Institutions", "Regulation", "Memecoins", "Emerging"];
+const securityTerms = /(exploit|hack|hacked|drain|drained|attack|vulnerability|vulnerable|breach|stolen|flash loan|bridge attack|private key|contract bug)/i;
+const airdropTerms = /(airdrop|airdrop campaign|token claim|claim window|snapshot|points program|retroactive|testnet|quest|points|eligib)/i;
+const aiTerms = /(\bai\b|artificial intelligence|agentic|ai agent|ai agents|autonomous agent|machine learning|inference|llm|model)/i;
+const defiTerms = /(defi|dex|lending|borrow|yield|liquidity|amm|perps|perpetual|stablecoin)/i;
+const marketTerms = /(bitcoin|btc|ethereum|eth|solana|sol|price|market|etf|fund|institution|treasury|inflow|outflow)/i;
+const regulatoryTerms = /(regulation|regulator|sec|cftc|law|bill|legislation|policy|court|compliance|license)/i;
+
+function top(items: ResearchItem[], predicate: (item: ResearchItem) => boolean, limit = 8) {
+  return items.filter(predicate).sort((a, b) => b.scores.overall - a.scores.overall).slice(0, limit);
+}
+
+function report(name: string, role: string, selected: ResearchItem[], findings: string[]): AgentReport {
+  return { name, role, status: selected.length ? "completed" : "degraded", findings, itemIds: selected.map(i => i.id) };
+}
+
+function scoutAgent(items: ResearchItem[]): AgentReport {
+  const selected = items.slice().sort((a, b) => b.scores.overall - a.scores.overall).slice(0, 20);
+  return report("Scout Agent", "Find fresh high-signal Web3 developments", selected, [
+    `Reviewed ${items.length} fresh research candidates.`,
+    `Shortlisted ${selected.length} highest-scoring candidates for specialist review.`,
+  ]);
+}
+
+function airdropAgent(items: ResearchItem[]): AgentReport {
+  const selected = top(items, i => i.category === "Airdrops" || i.category === "Airdrop Guides" || airdropTerms.test(`${i.title} ${i.summary}`));
+  return report("Airdrop Agent", "Detect actionable airdrops, claims, points, quests and guides", selected, [
+    `Found ${selected.length} airdrop-related candidates.`,
+    selected[0] ? `Top opportunity: ${selected[0].title}` : "No current airdrop opportunity met the freshness filter.",
+  ]);
+}
+
+function securityAgent(items: ResearchItem[]): AgentReport {
+  const selected = top(items, i => i.category === "Exploits & Hacks" || securityTerms.test(`${i.title} ${i.summary}`));
+  return report("Security Agent", "Detect exploits, hacks, vulnerabilities and user-impacting incidents", selected, [
+    `Found ${selected.length} security-related candidates.`,
+    selected[0] ? `Top security signal: ${selected[0].title}` : "No current security incident met the freshness filter.",
+  ]);
+}
+
+function socialAgent(items: ResearchItem[]): AgentReport {
+  const selected = items.filter(i => i.source === "Reddit" || i.source === "X").sort((a, b) => (b.community?.score || 0) - (a.community?.score || 0)).slice(0, 15);
+  return report("Social Signal Agent", "Combine Reddit and X web signals into narrative momentum", selected, [
+    `Collected ${selected.length} social-signal candidates.`,
+    `Highest social signal: ${selected[0]?.community?.score ?? 0}/100.`,
+  ]);
+}
+
+function aiAgent(items: ResearchItem[]): AgentReport {
+  const selected = top(items, i => i.category === "AI & Agentic" || aiTerms.test(`${i.title} ${i.summary}`));
+  return report("AI & Agentic Agent", "Find fresh AI, agentic AI and autonomous-agent developments in Web3", selected, [
+    `Found ${selected.length} AI/agentic candidates.`,
+    selected[0] ? `Top AI/agentic signal: ${selected[0].title}` : "No current AI/agentic opportunity met the freshness filter.",
+  ]);
+}
+
+function defiAgent(items: ResearchItem[]): AgentReport {
+  const selected = top(items, i => i.category === "DeFi" || defiTerms.test(`${i.title} ${i.summary}`));
+  return report("DeFi Agent", "Track DeFi protocols, liquidity, lending, DEXs, perps and stablecoin developments", selected, [
+    `Found ${selected.length} DeFi candidates.`,
+    selected[0] ? `Top DeFi signal: ${selected[0].title}` : "No current DeFi signal met the freshness filter.",
+  ]);
+}
+
+function marketsAgent(items: ResearchItem[]): AgentReport {
+  const selected = top(items, i => ["Bitcoin", "Ethereum", "Markets"].includes(i.category) || marketTerms.test(`${i.title} ${i.summary}`));
+  return report("Markets Agent", "Track Bitcoin, Ethereum, market structure, ETF, flows and institutional signals", selected, [
+    `Found ${selected.length} market candidates.`,
+    selected[0] ? `Top market signal: ${selected[0].title}` : "No current market signal met the freshness filter.",
+  ]);
+}
+
+function regulationAgent(items: ResearchItem[]): AgentReport {
+  const selected = top(items, i => i.category === "Regulation" || regulatoryTerms.test(`${i.title} ${i.summary}`));
+  return report("Policy & Regulation Agent", "Track regulators, legislation, courts, licensing and policy changes", selected, [
+    `Found ${selected.length} policy/regulation candidates.`,
+    selected[0] ? `Top policy signal: ${selected[0].title}` : "No current policy signal met the freshness filter.",
+  ]);
+}
+
+async function verificationAgent(items: ResearchItem[]): Promise<{ report: AgentReport; verified: number; needs_review: number; rejected: number }> {
+  const verified: ResearchItem[] = [];
+  const review: ResearchItem[] = [];
+  const rejected: ResearchItem[] = [];
+  for (const item of items) {
+    const date = new Date(item.publishedAt).getTime();
+    const fresh = Number.isFinite(date) && date >= Date.now() - 72 * 60 * 60 * 1000 && date <= Date.now() + 15 * 60 * 1000;
+    const hasSource = Boolean(item.url && item.source);
+    const isSocial = item.source === "Reddit" || item.source === "X";
+    if (!fresh || !hasSource) rejected.push(item);
+    else if (isSocial) review.push(item);
+    else verified.push(item);
+  }
+  const accepted = [...verified, ...review];
+  return {
+    report: report("Verification Agent", "Gate freshness, provenance, source quality and risk before content generation", accepted, [
+      `Verified ${verified.length} candidates from attributable sources.`,
+      `${review.length} social-signal candidates require source confirmation before publication.`,
+      `Rejected ${rejected.length} stale or incomplete candidates.`,
+    ]),
+    verified: verified.length,
+    needs_review: review.length,
+    rejected: rejected.length,
+  };
+}
+
+function trendAgent(items: ResearchItem[], narratives: Narrative[]): AgentReport {
+  const selected = items.slice().sort((a, b) => b.scores.overall - a.scores.overall).slice(0, 15);
+  const topNarratives = narratives.slice(0, 5).map(n => n.name).join(", ");
+  return report("Trend & Narrative Agent", "Identify emerging narratives, momentum and cross-source themes", selected, [
+    `Analyzed ${items.length} candidates for narrative momentum.`,
+    topNarratives ? `Leading narratives: ${topNarratives}.` : "No dominant narrative was detected.",
+  ]);
+}
+
+function strategistAgent(items: ResearchItem[]): { report: AgentReport; selected: ResearchItem[] } {
+  const available = items;
+  const priority = top(available, i => PRIORITY.includes(i.category) || securityTerms.test(`${i.title} ${i.summary}`) || airdropTerms.test(`${i.title} ${i.summary}`), 15);
+  const selected = [...priority];
+  const selectedIds = new Set(selected.map(i => i.id));
+  for (const category of FALLBACK) {
+    if (selected.length >= 40) break;
+    const pool = available.filter(i => !selectedIds.has(i.id) && (i.category === category || (category === "AI & Agentic" && aiTerms.test(`${i.title} ${i.summary}`)))).sort((a, b) => b.scores.overall - a.scores.overall);
+    for (const item of pool) {
+      if (selected.length >= 40) break;
+      selected.push(item);
+      selectedIds.add(item.id);
+    }
+  }
+  if (selected.length < 40) {
+    for (const item of available.slice().sort((a, b) => b.scores.overall - a.scores.overall)) {
+      if (selected.length >= 40) break;
+      if (selectedIds.has(item.id)) continue;
+      selected.push(item);
+      selectedIds.add(item.id);
+    }
+  }
+  return {
+    selected,
+    report: report("Strategist Agent", "Build the final opportunity pool with priority lanes, diversity and publication potential", selected, [
+      `Reviewed ${available.length} verified candidates.`,
+      `Selected ${priority.length} priority candidates first.`,
+      `Built a ${selected.length}-candidate reserve for downstream memory filtering and content generation.`,
+      `Maintained coverage across security, airdrops, AI/agents, DeFi, markets and policy where available.`,
+    ]),
+  };
+}
+
+export async function runMultiAgentResearch(_excludedIds: string[] = []): Promise<MultiAgentPacket> {
+  // Research is deliberately collected once and then analyzed by independent specialist agents.
+  // Persistent memory filtering happens downstream so stale client state cannot poison discovery.
+  const research = await runResearch();
+  const items = research.items;
+
+  const scout = scoutAgent(items);
+  const airdrop = airdropAgent(items);
+  const security = securityAgent(items);
+  const social = socialAgent(items);
+  const ai = aiAgent(items);
+  const defi = defiAgent(items);
+  const markets = marketsAgent(items);
+  const regulation = regulationAgent(items);
+  const trend = trendAgent(items, research.narratives);
+  const verification = await verificationAgent(items);
+  const verifiedItems = items.filter(item => verification.report.itemIds.includes(item.id));
+  const strategy = strategistAgent(verifiedItems);
+
+  return {
+    generated_at_utc: research.generatedAt,
+    current_date: research.generatedAt.slice(0, 10),
+    candidates: strategy.selected,
+    narratives: research.narratives,
+    agents: [scout, airdrop, security, social, ai, defi, markets, regulation, trend, verification.report, strategy.report],
+    priority_focus: [...PRIORITY, "AI & Agentic", "DeFi", "Markets", "Policy & Regulation"],
+    verification: {
+      verified: verification.verified,
+      needs_review: verification.needs_review,
+      rejected: verification.rejected,
+    },
+    source_health: research.sourceHealth || [],
+    raw_candidate_count: research.raw_candidate_count || 0,
+    fresh_candidate_count: research.fresh_candidate_count || items.length,
+  };
+}
