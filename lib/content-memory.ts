@@ -26,6 +26,7 @@ type HistoryRow = {
 };
 
 const MEMORY_WINDOW_HOURS = 24;
+
 let cached: SupabaseClient | null = null;
 
 function db() {
@@ -79,15 +80,21 @@ export async function rememberCandidates(candidates: Array<{ id: string; title: 
   if (error) throw new Error(`Supabase candidate memory failed: ${error.message}`);
 }
 
-// A generated story has one primary research candidate. Multiple source URLs may
-// support it, but they must never block the entire candidate pool. This also repairs
-// legacy rows that accidentally stored dozens of candidate IDs on one story.
+// A legacy briefing can contain many candidate IDs because older versions of the
+// generator stored the entire research pool on one story. Never treat every ID in
+// such a row as covered: one saved story should reserve only its primary candidate.
 function primaryCandidateIds(row: Pick<HistoryRow, "candidate_ids">) {
-  return Array.isArray(row.candidate_ids) && row.candidate_ids.length ? [row.candidate_ids[0]] : [];
+  const ids = Array.isArray(row.candidate_ids) ? row.candidate_ids.filter(id => typeof id === "string" && id.trim()) : [];
+  return ids.slice(0, 1);
 }
 
 export async function getUsedCandidateIds(limit = 500) {
-  const { data, error } = await db().from("web3pulse_content_history").select("candidate_ids").gte("generated_at", memoryCutoff()).order("generated_at", { ascending: false }).limit(limit);
+  const { data, error } = await db()
+    .from("web3pulse_content_history")
+    .select("candidate_ids")
+    .gte("generated_at", memoryCutoff())
+    .order("generated_at", { ascending: false })
+    .limit(limit);
   if (error) throw new Error(`Supabase history lookup failed: ${error.message}`);
   const ids = new Set<string>();
   for (const row of data || []) for (const id of primaryCandidateIds(row as HistoryRow)) ids.add(id);
@@ -95,18 +102,27 @@ export async function getUsedCandidateIds(limit = 500) {
 }
 
 export async function getRecentHistory(limit = 300): Promise<HistoryRow[]> {
-  const { data, error } = await db().from("web3pulse_content_history").select("id,headline,normalized_headline,category,candidate_ids,source_urls,generated_at,status,content_fingerprint").gte("generated_at", memoryCutoff()).order("generated_at", { ascending: false }).limit(limit);
+  const { data, error } = await db()
+    .from("web3pulse_content_history")
+    .select("id,headline,normalized_headline,category,candidate_ids,source_urls,generated_at,status,content_fingerprint")
+    .gte("generated_at", memoryCutoff())
+    .order("generated_at", { ascending: false })
+    .limit(limit);
   if (error) throw new Error(`Supabase history lookup failed: ${error.message}`);
   return (data || []) as HistoryRow[];
 }
 
 export async function getLatestSavedStories(limit = 5): Promise<MemoryStory[]> {
-  const { data, error } = await db().from("web3pulse_content_history").select("headline,category,candidate_ids,source_urls,content,status,generated_at,llm_provider,llm_model").order("generated_at", { ascending: false }).limit(limit);
+  const { data, error } = await db()
+    .from("web3pulse_content_history")
+    .select("headline,category,candidate_ids,source_urls,content,status,generated_at,llm_provider,llm_model")
+    .order("generated_at", { ascending: false })
+    .limit(limit);
   if (error) throw new Error(`Supabase latest briefing lookup failed: ${error.message}`);
   return (data || []).map((row: any) => ({
     headline: row.headline,
     category: row.category || undefined,
-    candidate_ids: Array.isArray(row.candidate_ids) ? row.candidate_ids.slice(0, 1) : [],
+    candidate_ids: primaryCandidateIds(row as HistoryRow),
     source_urls: row.source_urls || [],
     content: row.content,
     status: row.status,
@@ -119,7 +135,7 @@ export async function getLatestSavedStories(limit = 5): Promise<MemoryStory[]> {
 export async function filterPreviouslyCovered<T extends { id: string; title: string; url: string }>(candidates: T[]) {
   if (!candidates.length) return candidates;
   const history = await getRecentHistory();
-  const usedIds = new Set(history.flatMap((row) => primaryCandidateIds(row)));
+  const usedIds = new Set(history.flatMap(primaryCandidateIds));
   const usedUrls = new Set(history.flatMap((row) => (row.source_urls || []).map((url) => normalizeHeadline(url))));
   const usedHeadlines = history.map(row => row.headline || row.normalized_headline || "");
   return candidates.filter((candidate) => {
@@ -134,10 +150,13 @@ export async function saveGeneratedStories(stories: MemoryStory[]) {
   if (!stories.length) return;
   const uniqueByFingerprint = new Map<string, MemoryStory>();
   for (const story of stories) {
+    // Enforce one primary candidate per generated story at the persistence boundary.
+    // This protects memory even if an LLM accidentally returns multiple IDs.
     const normalizedStory = { ...story, candidate_ids: Array.isArray(story.candidate_ids) ? story.candidate_ids.slice(0, 1) : [] };
     const key = fingerprint(normalizedStory.headline, normalizedStory.candidate_ids, normalizedStory.source_urls);
     if (!uniqueByFingerprint.has(key)) uniqueByFingerprint.set(key, normalizedStory);
   }
+
   for (const story of uniqueByFingerprint.values()) {
     const row = {
       headline: story.headline,
