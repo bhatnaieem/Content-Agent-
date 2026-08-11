@@ -25,6 +25,8 @@ type HistoryRow = {
   content_fingerprint: string;
 };
 
+const MEMORY_WINDOW_DAYS = 7;
+
 let cached: SupabaseClient | null = null;
 
 function db() {
@@ -73,16 +75,28 @@ export async function rememberCandidates(candidates: Array<{ id: string; title: 
   if (error) throw new Error(`Supabase candidate memory failed: ${error.message}`);
 }
 
-export async function getUsedCandidateIds(limit = 500) {
-  const { data, error } = await db().from("web3pulse_content_history").select("candidate_ids").order("generated_at", { ascending: false }).limit(limit);
+export async function getUsedCandidateIds(limit = 500, withinDays = MEMORY_WINDOW_DAYS) {
+  const cutoff = new Date(Date.now() - withinDays * 24 * 60 * 60 * 1000).toISOString();
+  const { data, error } = await db()
+    .from("web3pulse_content_history")
+    .select("candidate_ids")
+    .gte("generated_at", cutoff)
+    .order("generated_at", { ascending: false })
+    .limit(limit);
   if (error) throw new Error(`Supabase history lookup failed: ${error.message}`);
   const ids = new Set<string>();
   for (const row of data || []) for (const id of row.candidate_ids || []) ids.add(id);
   return [...ids];
 }
 
-export async function getRecentHistory(limit = 300): Promise<HistoryRow[]> {
-  const { data, error } = await db().from("web3pulse_content_history").select("id,headline,normalized_headline,category,candidate_ids,source_urls,generated_at,status,content_fingerprint").order("generated_at", { ascending: false }).limit(limit);
+export async function getRecentHistory(limit = 300, withinDays = MEMORY_WINDOW_DAYS): Promise<HistoryRow[]> {
+  const cutoff = new Date(Date.now() - withinDays * 24 * 60 * 60 * 1000).toISOString();
+  const { data, error } = await db()
+    .from("web3pulse_content_history")
+    .select("id,headline,normalized_headline,category,candidate_ids,source_urls,generated_at,status,content_fingerprint")
+    .gte("generated_at", cutoff)
+    .order("generated_at", { ascending: false })
+    .limit(limit);
   if (error) throw new Error(`Supabase history lookup failed: ${error.message}`);
   return (data || []) as HistoryRow[];
 }
