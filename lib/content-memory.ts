@@ -80,12 +80,14 @@ export async function rememberCandidates(candidates: Array<{ id: string; title: 
   if (error) throw new Error(`Supabase candidate memory failed: ${error.message}`);
 }
 
-// A legacy briefing can contain many candidate IDs because older versions of the
-// generator stored the entire research pool on one story. Never treat every ID in
-// such a row as covered: one saved story should reserve only its primary candidate.
 function primaryCandidateIds(row: Pick<HistoryRow, "candidate_ids">) {
   const ids = Array.isArray(row.candidate_ids) ? row.candidate_ids.filter(id => typeof id === "string" && id.trim()) : [];
   return ids.slice(0, 1);
+}
+
+function primarySourceUrls(row: Pick<HistoryRow, "source_urls">) {
+  const urls = Array.isArray(row.source_urls) ? row.source_urls.filter(url => typeof url === "string" && url.trim()) : [];
+  return urls.slice(0, 1);
 }
 
 export async function getUsedCandidateIds(limit = 500) {
@@ -123,7 +125,7 @@ export async function getLatestSavedStories(limit = 5): Promise<MemoryStory[]> {
     headline: row.headline,
     category: row.category || undefined,
     candidate_ids: primaryCandidateIds(row as HistoryRow),
-    source_urls: row.source_urls || [],
+    source_urls: primarySourceUrls(row as HistoryRow),
     content: row.content,
     status: row.status,
     generated_at: row.generated_at,
@@ -136,7 +138,7 @@ export async function filterPreviouslyCovered<T extends { id: string; title: str
   if (!candidates.length) return candidates;
   const history = await getRecentHistory();
   const usedIds = new Set(history.flatMap(primaryCandidateIds));
-  const usedUrls = new Set(history.flatMap((row) => (row.source_urls || []).map((url) => normalizeHeadline(url))));
+  const usedUrls = new Set(history.flatMap(primarySourceUrls).map(normalizeHeadline));
   const usedHeadlines = history.map(row => row.headline || row.normalized_headline || "");
   return candidates.filter((candidate) => {
     if (usedIds.has(candidate.id)) return false;
@@ -150,9 +152,11 @@ export async function saveGeneratedStories(stories: MemoryStory[]) {
   if (!stories.length) return;
   const uniqueByFingerprint = new Map<string, MemoryStory>();
   for (const story of stories) {
-    // Enforce one primary candidate per generated story at the persistence boundary.
-    // This protects memory even if an LLM accidentally returns multiple IDs.
-    const normalizedStory = { ...story, candidate_ids: Array.isArray(story.candidate_ids) ? story.candidate_ids.slice(0, 1) : [] };
+    const normalizedStory = {
+      ...story,
+      candidate_ids: Array.isArray(story.candidate_ids) ? story.candidate_ids.slice(0, 1) : [],
+      source_urls: Array.isArray(story.source_urls) ? story.source_urls : [],
+    };
     const key = fingerprint(normalizedStory.headline, normalizedStory.candidate_ids, normalizedStory.source_urls);
     if (!uniqueByFingerprint.has(key)) uniqueByFingerprint.set(key, normalizedStory);
   }
