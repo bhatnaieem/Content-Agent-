@@ -12,10 +12,7 @@ type FreshCandidate = { id: string; title: string; url: string; source: string; 
 
 const CONTENT_PROMPT = `You are the Web3 Pulse Content Director Agent. Work ONLY from the supplied VERIFIED CURRENT candidates. Do not use model memory to add current events, old facts, invented claims, sources, URLs or dates. PRIORITY ORDER: 1. Exploits & Hacks 2. Airdrops 3. Airdrop Guides 4. Other high-interest Web3 only when no stronger priority candidate exists. Select the strongest 1-2 opportunities. IMPORTANT: for every story, candidate_ids MUST be an array containing the exact id value copied from the supplied candidate JSON. Do not invent, abbreviate or transform IDs. Also preserve the exact supplied source URL in sources. Every story must be traceable to at least one supplied candidate. Generate master thread, single X post, reply, quote tweet, poll with exactly 4 choices, blog expansion, creative/image prompt and alt text. Make every format genuinely different. For airdrops never invent eligibility, tasks, claim links, rewards or deadlines. For security incidents never invent affected users, losses, attacker identity or remediation. Return ONLY valid JSON. No Markdown fences or commentary.`;
 
-function clientContext(client?: ClientProfile) {
-  if (!client) return "";
-  return ["", "CLIENT PROFILE", `Name: ${client.name || ""}`, `Description: ${client.description || ""}`, `Sector: ${client.sector || ""}`, `Chains/ecosystems: ${client.chains || ""}`, `Priority topics: ${client.topics || ""}`, `Competitors: ${client.competitors || ""}`, `Audience: ${client.audience || ""}`, `Tone: ${client.tone || ""}`, `PR objectives: ${client.objectives || ""}`, `Avoid/guardrails: ${client.avoid || ""}`].join("\n");
-}
+function clientContext(client?: ClientProfile) { if (!client) return ""; return ["", "CLIENT PROFILE", `Name: ${client.name || ""}`, `Description: ${client.description || ""}`, `Sector: ${client.sector || ""}`, `Chains/ecosystems: ${client.chains || ""}`, `Priority topics: ${client.topics || ""}`, `Competitors: ${client.competitors || ""}`, `Audience: ${client.audience || ""}`, `Tone: ${client.tone || ""}`, `PR objectives: ${client.objectives || ""}`, `Avoid/guardrails: ${client.avoid || ""}`].join("\n"); }
 function normalizeUrl(url: string) { return String(url || "").trim().replace(/\/$/, ""); }
 function resolveCandidateIds(story: any, candidates: FreshCandidate[]): string[] {
   const byId = new Map(candidates.map(c => [c.id, c]));
@@ -29,89 +26,41 @@ function resolveCandidateIds(story: any, candidates: FreshCandidate[]): string[]
   if (urlMatches.length) return Array.from(new Set(urlMatches));
   if (candidates.length === 1) return [candidates[0].id];
   const headline = String(story?.headline || story?.thread?.title || "").toLowerCase().trim();
-  if (headline) {
-    const matches = candidates.filter(c => { const title = c.title.toLowerCase().trim(); return title === headline || title.includes(headline) || headline.includes(title); }).map(c => c.id);
-    if (matches.length === 1) return matches;
-  }
+  if (headline) { const matches = candidates.filter(c => { const title = c.title.toLowerCase().trim(); return title === headline || title.includes(headline) || headline.includes(title); }).map(c => c.id); if (matches.length === 1) return matches; }
   return [];
 }
-
 function normalizeStory(story: any, currentDate: string, candidates: FreshCandidate[]): Story | null {
-  const ids = resolveCandidateIds(story, candidates);
-  if (!ids.length) return null;
+  const ids = resolveCandidateIds(story, candidates); if (!ids.length) return null;
   const candidateMap = new Map(candidates.map(c => [c.id, c]));
-  const supported = ids.map(id => candidateMap.get(id)).filter((item): item is FreshCandidate => Boolean(item));
-  if (!supported.length) return null;
+  const supported = ids.map(id => candidateMap.get(id)).filter((item): item is FreshCandidate => Boolean(item)); if (!supported.length) return null;
   const first = supported[0];
   const threadSource = story?.thread && typeof story.thread === "object" ? story.thread : {};
   const engagement = story?.engagement && typeof story.engagement === "object" ? story.engagement : {};
-  const tweets = Array.isArray(threadSource.tweets) ? threadSource.tweets.filter((x: unknown): x is string => typeof x === "string" && x.trim()) : [];
+  const tweets = Array.isArray(threadSource.tweets) ? threadSource.tweets.filter((x: unknown): x is string => typeof x === "string" && Boolean(x.trim())) : [];
   const sourceDetails: SourceDetail[] = supported.map(item => ({ name: item.source, url: item.url, published_at: item.publishedAt }));
-  return {
-    headline: String(story?.headline || first.title),
-    category: String(story?.category || first.category || "Emerging"),
-    score: Number.isFinite(Number(story?.score)) ? Number(story.score) : first.score,
-    format: story?.format === "single post" ? "single post" : "thread",
-    reason: String(story?.reason || first.opportunity || "Current verified Web3 development."),
-    summary: String(story?.summary || first.summary || ""),
-    keywords: Array.isArray(story?.keywords) ? story.keywords.filter((x: unknown): x is string => typeof x === "string") : first.keywords || [],
-    hashtags: Array.isArray(story?.hashtags) ? story.hashtags.filter((x: unknown): x is string => typeof x === "string") : [],
-    sources: sourceDetails.map(item => item.url),
-    source_details: sourceDetails,
-    posting_time_utc: String(story?.posting_time_utc || first.publishedAt),
-    cta: String(story?.cta || "Review the source and add your own perspective."),
-    graphic_prompt: String(story?.graphic_prompt || `Create a premium editorial Web3 visual for: ${story?.headline || first.title}.`),
-    alt_text: String(story?.alt_text || `Editorial visual representing ${story?.headline || first.title}.`),
-    thread: { title: String(threadSource.title || story?.headline || first.title), tweets: tweets.length ? tweets : [String(story?.summary || first.summary || story?.headline || first.title)] },
-    engagement: { reply: String(engagement.reply || ""), quote_tweet: String(engagement.quote_tweet || ""), poll: String(engagement.poll || ""), blog_expansion: String(engagement.blog_expansion || "") },
-    candidate_ids: ids,
-  };
+  return { headline: String(story?.headline || first.title), category: String(story?.category || first.category || "Emerging"), score: Number.isFinite(Number(story?.score)) ? Number(story.score) : first.score, format: story?.format === "single post" ? "single post" : "thread", reason: String(story?.reason || first.opportunity || "Current verified Web3 development."), summary: String(story?.summary || first.summary || ""), keywords: Array.isArray(story?.keywords) ? story.keywords.filter((x: unknown): x is string => typeof x === "string") : first.keywords || [], hashtags: Array.isArray(story?.hashtags) ? story.hashtags.filter((x: unknown): x is string => typeof x === "string") : [], sources: sourceDetails.map(item => item.url), source_details: sourceDetails, posting_time_utc: String(story?.posting_time_utc || first.publishedAt), cta: String(story?.cta || "Review the source and add your own perspective."), graphic_prompt: String(story?.graphic_prompt || `Create a premium editorial Web3 visual for: ${story?.headline || first.title}.`), alt_text: String(story?.alt_text || `Editorial visual representing ${story?.headline || first.title}.`), thread: { title: String(threadSource.title || story?.headline || first.title), tweets: tweets.length ? tweets : [String(story?.summary || first.summary || story?.headline || first.title)] }, engagement: { reply: String(engagement.reply || ""), quote_tweet: String(engagement.quote_tweet || ""), poll: String(engagement.poll || ""), blog_expansion: String(engagement.blog_expansion || "") }, candidate_ids: ids };
 }
-
 function isRateLimitError(error: unknown) { const text = error instanceof Error ? error.message : String(error); return /429|rate.?limit|quota|resource.?exhausted/i.test(text); }
-function parseLLMJson(content: string): any {
-  const cleaned = content.replace(/^\s*```(?:json)?\s*/i, "").replace(/\s*```\s*$/i, "").trim();
-  try { return JSON.parse(cleaned); } catch {}
-  const start = cleaned.indexOf("{");
-  if (start < 0) throw new Error("LLM returned no JSON object.");
-  let depth = 0, inString = false, escaped = false;
-  for (let i = start; i < cleaned.length; i++) {
-    const ch = cleaned[i];
-    if (inString) { if (escaped) escaped = false; else if (ch === "\\") escaped = true; else if (ch === '"') inString = false; continue; }
-    if (ch === '"') { inString = true; continue; }
-    if (ch === "{") depth++;
-    else if (ch === "}") { depth--; if (depth === 0) { try { return JSON.parse(cleaned.slice(start, i + 1)); } catch { break; } } }
-  }
-  throw new Error("LLM returned invalid JSON.");
-}
+function parseLLMJson(content: string): any { const cleaned = content.replace(/^\s*```(?:json)?\s*/i, "").replace(/\s*```\s*$/i, "").trim(); try { return JSON.parse(cleaned); } catch {} const start = cleaned.indexOf("{"); if (start < 0) throw new Error("LLM returned no JSON object."); let depth=0,inString=false,escaped=false; for(let i=start;i<cleaned.length;i++){const ch=cleaned[i];if(inString){if(escaped)escaped=false;else if(ch==="\\")escaped=true;else if(ch==='"')inString=false;continue}if(ch==='"'){inString=true;continue}if(ch==="{")depth++;else if(ch==="}"){depth--;if(depth===0){try{return JSON.parse(cleaned.slice(start,i+1))}catch{break}}}}throw new Error("LLM returned invalid JSON."); }
 
 export async function POST(request: Request) {
-  const started = Date.now();
-  try {
-    let body: { provider?: string; clientProfile?: ClientProfile } = {};
-    try { body = await request.json(); } catch {}
-    const provider = ["auto", "gemini", "nemotron", "openrouter"].includes(body.provider || "") ? (body.provider as "auto" | "gemini" | "nemotron" | "openrouter") : "auto";
-    const now = new Date();
-    const currentDate = now.toISOString().slice(0, 10);
-    const cutoffUtc = new Date(now.getTime() - 48 * 60 * 60 * 1000).toISOString();
-    const packet = await runMultiAgentResearch();
-    const freshCandidates: FreshCandidate[] = packet.candidates.filter(item => { const t = Date.parse(item.publishedAt); return Number.isFinite(t) && t >= Date.parse(cutoffUtc) && t <= now.getTime(); }).map(item => ({ id: item.id, title: item.title, url: item.url, source: item.source, publishedAt: item.publishedAt, summary: item.summary, category: item.category, keywords: item.keywords, score: item.scores.overall, opportunity: item.opportunity }));
-    if (!freshCandidates.length) return NextResponse.json({ error: "No fresh verified candidates were selected. Web3 Pulse will not generate stale content.", code: "NO_FRESH_CANDIDATES", date: currentDate, cutoff_utc: cutoffUtc, agents: packet.agents, verification: packet.verification }, { status: 503 });
-    const context = [`CURRENT_DATE: ${currentDate}`, `CURRENT_TIME_UTC: ${now.toISOString()}`, `CUTOFF_UTC: ${cutoffUtc}`, "Only the supplied candidates may be used as factual sources.", `MULTI_AGENT_REPORTS: ${JSON.stringify(packet.agents)}`, `VERIFICATION: ${JSON.stringify(packet.verification)}`, `PRIORITY_FOCUS: ${packet.priority_focus.join(", ")}`, `NARRATIVES: ${JSON.stringify(packet.narratives.slice(0, 8))}`].join("\n");
-    const candidateContext = `VERIFIED CURRENT CANDIDATES (${freshCandidates.length}):\n${JSON.stringify(freshCandidates, null, 2)}`;
-    const generation = await generateWithLLM({ provider, system: CONTENT_PROMPT, user: `${context}\n\n${candidateContext}\n\nGenerate the COMPLETE CONTENT PACKAGE. Output one JSON object with a stories array.` + clientContext(body.clientProfile), responseFormat: "json_object", temperature: 0.1 });
-    let data: any;
-    try { data = parseLLMJson(generation.content); } catch (error) { console.error("Web3 Pulse JSON parse error", { provider: generation.provider, model: generation.model, rawPreview: String(generation.content).slice(0, 300) }); return NextResponse.json({ error: "The selected LLM returned malformed structured output.", code: "INVALID_LLM_JSON", provider: generation.provider, model: generation.model, date: currentDate }, { status: 502 }); }
-    const rawStories = Array.isArray(data.stories) ? data.stories : [];
-    const stories = rawStories.map((story: any) => normalizeStory(story, currentDate, freshCandidates)).filter((story: Story | null): story is Story => Boolean(story));
-    const freshStories = stories.filter(story => story.candidate_ids.every(id => { const candidate = freshCandidates.find(item => item.id === id); const t = candidate ? Date.parse(candidate.publishedAt) : NaN; return Number.isFinite(t) && t >= Date.parse(cutoffUtc) && t <= now.getTime(); }));
-    console.info("Web3 Pulse grounding", { provider: generation.provider, model: generation.model, candidate_count: freshCandidates.length, raw_story_count: rawStories.length, grounded_story_count: freshStories.length, returned_candidate_ids: freshStories.map(s => s.candidate_ids) });
-    if (!freshStories.length) return NextResponse.json({ error: "The LLM returned no story grounded in the verified current candidates.", code: "NO_GROUNDED_STORIES", date: currentDate, candidate_count: freshCandidates.length, raw_story_count: rawStories.length, llm_provider: generation.provider, llm_model: generation.model }, { status: 503 });
-    return NextResponse.json({ ...data, date: currentDate, generated_at_utc: now.toISOString(), stories: freshStories, research_window: { cutoff_utc: cutoffUtc, hours: 48, candidate_count: freshCandidates.length }, research_sources: packet.narratives, agents: packet.agents, verification: packet.verification, llm_provider: generation.provider, llm_model: generation.model, client_mode: Boolean(body.clientProfile), client_name: body.clientProfile?.name || null, priority_focus: packet.priority_focus, llm_calls: 1, elapsed_ms: Date.now() - started });
-  } catch (error: any) {
-    console.error("Web3 Pulse Generation Error:", error);
-    const rateLimited = isRateLimitError(error);
-    const message = rateLimited ? "LLM rate limit or quota reached. Web3 Pulse stopped without generating stale content." : error?.message || "Failed to generate current Web3 Pulse intelligence.";
-    return NextResponse.json({ error: message, code: rateLimited ? "LLM_RATE_LIMIT" : "GENERATION_ERROR", elapsed_ms: Date.now() - started }, { status: rateLimited ? 429 : 500 });
-  }
+ const started=Date.now();
+ try{
+  let body:{provider?:string;clientProfile?:ClientProfile}={};try{body=await request.json()}catch{}
+  const provider=["auto","gemini","nemotron","openrouter"].includes(body.provider||"")?(body.provider as "auto"|"gemini"|"nemotron"|"openrouter"):"auto";
+  const now=new Date(),currentDate=now.toISOString().slice(0,10),cutoffUtc=new Date(now.getTime()-48*60*60*1000).toISOString();
+  const packet=await runMultiAgentResearch();
+  const freshCandidates:FreshCandidate[]=packet.candidates.filter(item=>{const t=Date.parse(item.publishedAt);return Number.isFinite(t)&&t>=Date.parse(cutoffUtc)&&t<=now.getTime()}).map(item=>({id:item.id,title:item.title,url:item.url,source:item.source,publishedAt:item.publishedAt,summary:item.summary,category:item.category,keywords:item.keywords,score:item.scores.overall,opportunity:item.opportunity}));
+  if(!freshCandidates.length)return NextResponse.json({error:"No fresh verified candidates were selected. Web3 Pulse will not generate stale content.",code:"NO_FRESH_CANDIDATES",date:currentDate,cutoff_utc:cutoffUtc,agents:packet.agents,verification:packet.verification},{status:503});
+  const context=[`CURRENT_DATE: ${currentDate}`,`CURRENT_TIME_UTC: ${now.toISOString()}`,`CUTOFF_UTC: ${cutoffUtc}`,"Only the supplied candidates may be used as factual sources.",`MULTI_AGENT_REPORTS: ${JSON.stringify(packet.agents)}`,`VERIFICATION: ${JSON.stringify(packet.verification)}`,`PRIORITY_FOCUS: ${packet.priority_focus.join(", ")}`,`NARRATIVES: ${JSON.stringify(packet.narratives.slice(0,8))}`].join("\n");
+  const candidateContext=`VERIFIED CURRENT CANDIDATES (${freshCandidates.length}):\n${JSON.stringify(freshCandidates,null,2)}`;
+  const generation=await generateWithLLM({provider,system:CONTENT_PROMPT,user:`${context}\n\n${candidateContext}\n\nGenerate the COMPLETE CONTENT PACKAGE. Output one JSON object with a stories array.`+clientContext(body.clientProfile),responseFormat:"json_object",temperature:0.1});
+  let data:any;try{data=parseLLMJson(generation.content)}catch{console.error("Web3 Pulse JSON parse error",{provider:generation.provider,model:generation.model,rawPreview:String(generation.content).slice(0,300)});return NextResponse.json({error:"The selected LLM returned malformed structured output.",code:"INVALID_LLM_JSON",provider:generation.provider,model:generation.model,date:currentDate},{status:502});}
+  const rawStories=Array.isArray(data.stories)?data.stories:[];
+  const stories=rawStories.map((s:any)=>normalizeStory(s,currentDate,freshCandidates)).filter((s:Story|null):s is Story=>Boolean(s));
+  const freshStories=stories.filter(s=>s.candidate_ids.every(id=>{const candidate=freshCandidates.find(item=>item.id===id);const t=candidate?Date.parse(candidate.publishedAt):NaN;return Number.isFinite(t)&&t>=Date.parse(cutoffUtc)&&t<=now.getTime()}));
+  console.info("Web3 Pulse grounding",{provider:generation.provider,model:generation.model,candidate_count:freshCandidates.length,raw_story_count:rawStories.length,grounded_story_count:freshStories.length,returned_candidate_ids:freshStories.map(s=>s.candidate_ids)});
+  if(!freshStories.length)return NextResponse.json({error:"The LLM returned no story grounded in the verified current candidates.",code:"NO_GROUNDED_STORIES",date:currentDate,candidate_count:freshCandidates.length,raw_story_count:rawStories.length,llm_provider:generation.provider,llm_model:generation.model},{status:503});
+  return NextResponse.json({...data,date:currentDate,generated_at_utc:now.toISOString(),stories:freshStories,research_window:{cutoff_utc:cutoffUtc,hours:48,candidate_count:freshCandidates.length},research_sources:packet.narratives,agents:packet.agents,verification:packet.verification,llm_provider:generation.provider,llm_model:generation.model,client_mode:Boolean(body.clientProfile),client_name:body.clientProfile?.name||null,priority_focus:packet.priority_focus,llm_calls:1,elapsed_ms:Date.now()-started});
+ }catch(error:any){console.error("Web3 Pulse Generation Error:",error);const rateLimited=isRateLimitError(error);return NextResponse.json({error:rateLimited?"LLM rate limit or quota reached. Web3 Pulse stopped without generating stale content.":error?.message||"Failed to generate current Web3 Pulse intelligence.",code:rateLimited?"LLM_RATE_LIMIT":"GENERATION_ERROR",elapsed_ms:Date.now()-started},{status:rateLimited?429:500});}
 }
