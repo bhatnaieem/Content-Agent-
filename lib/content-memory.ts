@@ -42,6 +42,19 @@ export function normalizeHeadline(value: string) {
   return value.toLowerCase().replace(/https?:\/\/\S+/g, " ").replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
 }
 
+function headlineTokens(value: string) {
+  const stop = new Set(["the","a","an","and","or","of","to","from","in","on","for","with","across","after","before","as","at","by","is","are","was","were","this","that","crypto","web3"]);
+  return new Set(normalizeHeadline(value).split(" ").filter(token => token.length >= 3 && !stop.has(token)));
+}
+
+function headlineSimilarity(a: string, b: string) {
+  const aa = headlineTokens(a), bb = headlineTokens(b);
+  if (!aa.size || !bb.size) return 0;
+  let overlap = 0;
+  for (const token of aa) if (bb.has(token)) overlap++;
+  return overlap / Math.min(aa.size, bb.size);
+}
+
 function fingerprint(headline: string, candidateIds: string[], sourceUrls: string[]) {
   return `${normalizeHeadline(headline)}|${[...candidateIds].sort().join(",")}|${sourceUrls.map(normalizeHeadline).sort().join(",")}`;
 }
@@ -91,14 +104,39 @@ export async function getRecentHistory(limit = 300): Promise<HistoryRow[]> {
   return (data || []) as HistoryRow[];
 }
 
+export async function getLatestSavedStories(limit = 5): Promise<MemoryStory[]> {
+  const { data, error } = await db()
+    .from("web3pulse_content_history")
+    .select("headline,category,candidate_ids,source_urls,content,status,generated_at,llm_provider,llm_model")
+    .order("generated_at", { ascending: false })
+    .limit(limit);
+  if (error) throw new Error(`Supabase latest briefing lookup failed: ${error.message}`);
+  return (data || []).map((row: any) => ({
+    headline: row.headline,
+    category: row.category || undefined,
+    candidate_ids: row.candidate_ids || [],
+    source_urls: row.source_urls || [],
+    content: row.content,
+    status: row.status,
+    generated_at: row.generated_at,
+    llm_provider: row.llm_provider || undefined,
+    llm_model: row.llm_model || undefined,
+  })) as MemoryStory[];
+}
+
 export async function filterPreviouslyCovered<T extends { id: string; title: string; url: string }>(candidates: T[]) {
   if (!candidates.length) return candidates;
   const history = await getRecentHistory();
   const usedIds = new Set(history.flatMap((row) => row.candidate_ids || []));
   const usedUrls = new Set(history.flatMap((row) => (row.source_urls || []).map((url) => normalizeHeadline(url))));
+  const usedHeadlines = history.map(row => row.headline || row.normalized_headline || "");
   return candidates.filter((candidate) => {
     if (usedIds.has(candidate.id)) return false;
     if (usedUrls.has(normalizeHeadline(candidate.url))) return false;
+    // Prevent the same real-world event from returning under a different RSS item,
+    // source URL, or slightly rewritten headline. This is intentionally conservative:
+    // a high token-overlap headline is treated as the same story for the 24h memory window.
+    if (usedHeadlines.some(headline => headlineSimilarity(candidate.title, headline) >= 0.72)) return false;
     return true;
   });
 }
@@ -111,10 +149,6 @@ export async function saveGeneratedStories(stories: MemoryStory[]) {
     if (!uniqueByFingerprint.has(key)) uniqueByFingerprint.set(key, story);
   }
 
-  // Insert one row at a time with duplicate-conflict ignoring. This is deliberately
-  // sequential: concurrent generation requests can produce the same fingerprint,
-  // and Supabase/Postgres can reject a multi-row upsert when the same conflict key
-  // appears twice in a single statement.
   for (const story of uniqueByFingerprint.values()) {
     const row = {
       headline: story.headline,
