@@ -58,7 +58,8 @@ export function fingerprint(headline: string, candidateIds: string[], sourceUrls
 
 export async function rememberCandidates(candidates: Array<{ id: string; title: string; url: string; source: string; category: string; publishedAt: string }>) {
   if (!candidates.length) return;
-  const rows = candidates.map((candidate) => ({
+  const unique = Array.from(new Map(candidates.map((candidate) => [candidate.id, candidate])).values());
+  const rows = unique.map((candidate) => ({
     id: candidate.id,
     title: candidate.title,
     normalized_title: normalizeHeadline(candidate.title),
@@ -102,7 +103,9 @@ export async function filterPreviouslyCovered<T extends { id: string; title: str
 
 export async function saveGeneratedStories(stories: MemoryStory[]) {
   if (!stories.length) return;
-  const rows = stories.map((story) => ({
+  const uniqueByFingerprint = new Map<string, MemoryStory>();
+  for (const story of stories) uniqueByFingerprint.set(fingerprint(story.headline, story.candidate_ids, story.source_urls), story);
+  const rows = Array.from(uniqueByFingerprint.values()).map((story) => ({
     headline: story.headline,
     normalized_headline: normalizeHeadline(story.headline),
     category: story.category || null,
