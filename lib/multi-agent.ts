@@ -6,7 +6,7 @@ export type MultiAgentPacket = { generated_at_utc:string; current_date:string; c
 const PRIORITY=["Exploits & Hacks","Airdrops","Airdrop Guides"];
 const securityTerms=/(exploit|hack|hacked|drain|drained|attack|vulnerability|vulnerable|breach|stolen|flash loan|bridge attack|private key|contract bug)/i;
 const airdropTerms=/(airdrop|airdrop campaign|token claim|claim window|snapshot|points program|retroactive|testnet|quest|points|eligib)/i;
-function top(items:ResearchItem[],predicate:(item:ResearchItem[])=>boolean,limit=8){return items.filter(predicate as any).sort((a,b)=>b.scores.overall-a.scores.overall).slice(0,limit)}
+function top(items:ResearchItem[],predicate:(item:ResearchItem)=>boolean,limit=8){return items.filter(predicate).sort((a,b)=>b.scores.overall-a.scores.overall).slice(0,limit)}
 function scoutAgent(items:ResearchItem[]):AgentReport{return {name:"Scout Agent",role:"Find fresh high-signal Web3 developments",status:items.length?"completed":"degraded",findings:[`Reviewed ${items.length} fresh research candidates.`,`Shortlisted ${Math.min(20,items.length)} candidates for specialist review.`],itemIds:items.slice().sort((a,b)=>b.scores.overall-a.scores.overall).slice(0,20).map(i=>i.id)}}
 function airdropAgent(items:ResearchItem[]):AgentReport{const selected=top(items,i=>i.category==="Airdrops"||i.category==="Airdrop Guides"||airdropTerms.test(`${i.title} ${i.summary}`));return {name:"Airdrop Agent",role:"Detect actionable airdrops, claims, points, quests and guides",status:selected.length?"completed":"degraded",findings:[`Found ${selected.length} airdrop-related candidates.`,selected[0]?`Top opportunity: ${selected[0].title}`:"No current airdrop opportunity met the freshness filter."],itemIds:selected.map(i=>i.id)}}
 function securityAgent(items:ResearchItem[]):AgentReport{const selected=top(items,i=>i.category==="Exploits & Hacks"||securityTerms.test(`${i.title} ${i.summary}`));return {name:"Security Agent",role:"Detect exploits, hacks, vulnerabilities and user-impacting incidents",status:selected.length?"completed":"degraded",findings:[`Found ${selected.length} security-related candidates.`,selected[0]?`Top security signal: ${selected[0].title}`:"No current security incident met the freshness filter."],itemIds:selected.map(i=>i.id)}}
@@ -16,9 +16,7 @@ function strategistAgent(items:ResearchItem[], excludedIds:Set<string>):{report:
   const available=items.filter(i=>!excludedIds.has(i.id));
   const priority=top(available,i=>i.category==="Exploits & Hacks"||i.category==="Airdrops"||i.category==="Airdrop Guides"||securityTerms.test(`${i.title} ${i.summary}`)||airdropTerms.test(`${i.title} ${i.summary}`),20);
   const pool=priority.length?priority:available.slice().sort((a,b)=>b.scores.overall-a.scores.overall).slice(0,20);
-  // Keep a larger verified pool here. The Content Director is responsible for
-  // choosing the best five; passing only five candidates made duplicate filtering
-  // capable of reducing the generation pool to zero.
+  // Keep a larger verified pool here. The Content Director chooses the best five.
   const final=pool.slice(0,20);
   return {selected:final,report:{name:"Strategist Agent",role:"Build a strong current opportunity pool while avoiding recently generated stories",status:final.length?"completed":"degraded",findings:[`Compared ${pool.length} verified high-priority candidates without an extra LLM call.`,`Excluded ${excludedIds.size} candidates generated within the memory window.`,`Passed ${final.length} eligible candidates to the Content Director for best-five selection.`,`Priority order: ${PRIORITY.join(" → ")}.`],itemIds:final.map(i=>i.id)}};
 }
