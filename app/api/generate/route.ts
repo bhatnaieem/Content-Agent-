@@ -18,21 +18,23 @@ PRIORITY ORDER:
 3. Airdrop Guides
 4. Other high-interest Web3 only when no stronger priority candidate exists.
 
-Every story must reference candidate_ids copied exactly from the supplied candidates. Preserve the supplied source URL and publication date. If evidence is insufficient, omit the story.
+Select the strongest 1-2 opportunities from the supplied candidates. Every story must reference candidate_ids copied exactly from the supplied candidates. Preserve the supplied source URL and publication date. If evidence is insufficient, omit the story.
+
+For EACH selected story generate the COMPLETE CONTENT PACKAGE in this single response:
+- Master thread with a strong hook and useful, factual tweets
+- Single X post
+- Reply
+- Quote tweet
+- Poll with exactly 4 distinct choices
+- Blog expansion with title, introduction, at least 3 sections, evidence/context, implications and conclusion
+- Creative/image-generation prompt
+- Alt text
+
+The engagement fields are part of the same story object: engagement.reply, engagement.quote_tweet, engagement.poll, engagement.blog_expansion.
+
 For airdrops, never invent eligibility, tasks, claim links, rewards or deadlines. For security incidents, never invent affected users, losses, attacker identity or remediation.
 
-Return strict JSON: {"date":"CURRENT_DATE","generated_at_utc":"ISO","stories":[{"candidate_ids":["EXACT_ID"],"headline":"","category":"Airdrops|Airdrop Guides|Exploits & Hacks|Other","score":0,"format":"thread|single post","reason":"","summary":"","keywords":[],"hashtags":[],"sources":[],"source_details":[],"posting_time_utc":"","cta":"","graphic_prompt":"","alt_text":"","thread":{"title":"","tweets":[]}}]}`;
-
-const FORMAT_PROMPT = `You are the Web3 Pulse Content Studio Agent.
-Create six genuinely different assets from the supplied CURRENT story. Use only supplied facts and dates. Do not introduce old facts or unrelated historical context as current.
-REPLY: 1-2 conversational sentences with one specific insight or question.
-QUOTE TWEET: 1-3 punchy sentences with a distinct opinion or counterpoint.
-POLL: concise question plus exactly 4 distinct choices.
-BLOG: substantial article draft/outline with title, introduction, at least 3 sections, evidence/context, implications and conclusion.
-CREATIVE: detailed image-generation prompt with visual scene, composition, subject, lighting, mood, camera/style and Web3 symbolism.
-ALT_TEXT: concise accessibility description.
-For airdrops, clearly separate confirmed information from speculation. For exploits/hacks, prioritize verified facts, user safety and current status.
-Return ONLY JSON with keys reply, quote_tweet, poll, blog_expansion, creative, alt_text.`;
+Return strict JSON: {"date":"CURRENT_DATE","generated_at_utc":"ISO","stories":[{"candidate_ids":["EXACT_ID"],"headline":"","category":"Airdrops|Airdrop Guides|Exploits & Hacks|Other","score":0,"format":"thread|single post","reason":"","summary":"","keywords":[],"hashtags":[],"sources":[],"source_details":[],"posting_time_utc":"","cta":"","graphic_prompt":"","alt_text":"","thread":{"title":"","tweets":[]},"engagement":{"reply":"","quote_tweet":"","poll":"","blog_expansion":""}}]}`;
 
 function clientContext(client?: ClientProfile): string { if (!client) return ""; return ["", "CLIENT PROFILE", `Name: ${client.name || ""}`, `Description: ${client.description || ""}`, `Sector: ${client.sector || ""}`, `Chains/ecosystems: ${client.chains || ""}`, `Priority topics: ${client.topics || ""}`, `Competitors: ${client.competitors || ""}`, `Audience: ${client.audience || ""}`, `Tone: ${client.tone || ""}`, `PR objectives: ${client.objectives || ""}`, `Avoid/guardrails: ${client.avoid || ""}`].join("\n"); }
 
@@ -42,6 +44,11 @@ function normalizeStory(story: any, currentDate: string, candidateMap: Map<strin
   const supported = ids.map((id) => candidateMap.get(id)).filter((item): item is FreshCandidate => Boolean(item));
   const sourceDetails: SourceDetail[] = supported.map((item) => ({ name: item.source, url: item.url, published_at: item.publishedAt }));
   return { ...story, date: currentDate, candidate_ids: ids, sources: sourceDetails.map((item) => item.url), source_details: sourceDetails };
+}
+
+function isRateLimitError(error: unknown): boolean {
+  const text = error instanceof Error ? error.message : String(error);
+  return /429|rate.?limit|quota|resource.?exhausted/i.test(text);
 }
 
 export async function POST(request: Request) {
@@ -64,24 +71,23 @@ export async function POST(request: Request) {
     const context = [`CURRENT_DATE: ${currentDate}`, `CURRENT_TIME_UTC: ${now.toISOString()}`, `CUTOFF_UTC: ${cutoffUtc}`, "The candidates below are the only allowed factual source for this generation run.", `MULTI_AGENT_REPORTS: ${JSON.stringify(packet.agents)}`, `VERIFICATION: ${JSON.stringify(packet.verification)}`, `PRIORITY_FOCUS: ${packet.priority_focus.join(", ")}`, `NARRATIVES: ${JSON.stringify(packet.narratives.slice(0, 8))}`].join("\n");
     const candidateContext = `VERIFIED CURRENT CANDIDATES (${freshCandidates.length}):\n${JSON.stringify(freshCandidates, null, 2)}`;
 
-    const research = await generateWithLLM({ provider, system: CONTENT_PROMPT, user: `${context}\n\n${candidateContext}\n\nSelect the strongest opportunities and return strict JSON. Do not use information outside these candidates.` + clientContext(body.clientProfile), responseFormat: "json_object", temperature: 0.12 });
-    const data = JSON.parse(research.content);
-    const stories: Story[] = Array.isArray(data.stories) ? data.stories.map((story: any) => normalizeStory(story, currentDate, candidateMap)).filter((story: Story | null): story is Story => Boolean(story)) : [];
+    let generation;
+    try {
+      generation = await generateWithLLM({ provider, system: CONTENT_PROMPT, user: `${context}\n\n${candidateContext}\n\nSelect the strongest opportunities and generate the COMPLETE CONTENT PACKAGE for each selected story. Do not use information outside these candidates.` + clientContext(body.clientProfile), responseFormat: "json_object", temperature: 0.2 });
+    } catch (error) {
+      if (isRateLimitError(error)) {
+        return NextResponse.json({ error: "LLM rate limit or quota reached. Web3 Pulse stopped generation instead of returning stale content. Try again after the provider quota resets or configure a second LLM provider.", code: "LLM_RATE_LIMIT", date: currentDate, agents: packet.agents, verification: packet.verification, candidate_count: freshCandidates.length }, { status: 429 });
+      }
+      throw error;
+    }
 
+    const data = JSON.parse(generation.content);
+    const stories: Story[] = Array.isArray(data.stories) ? data.stories.map((story: any) => normalizeStory(story, currentDate, candidateMap)).filter((story: Story | null): story is Story => Boolean(story)) : [];
     const freshStories = stories.filter((story) => story.candidate_ids?.every((id) => { const candidate = candidateMap.get(id); const t = candidate ? Date.parse(candidate.publishedAt) : NaN; return Number.isFinite(t) && t >= Date.parse(cutoffUtc) && t <= now.getTime(); }));
 
-    const enriched = await Promise.all(freshStories.map(async (story) => {
-      try {
-        const formats = await generateWithLLM({ provider, system: FORMAT_PROMPT, user: [context, "Create the six distinct Content Studio assets for this CURRENT story.", `Story date: ${currentDate}`, `Headline: ${story.headline}`, `Category: ${story.category}`, `Summary: ${story.summary}`, `Reason: ${story.reason}`, `Sources: ${(story.sources || []).join(" | ")}`, `Source details: ${JSON.stringify(story.source_details || [])}`, `Keywords: ${(story.keywords || []).join(", ")}`, `Core thread: ${(story.thread?.tweets || []).join("\n")}`, clientContext(body.clientProfile)].join("\n"), responseFormat: "json_object", temperature: 0.65 });
-        const assets = JSON.parse(formats.content);
-        return { ...story, graphic_prompt: assets.creative || story.graphic_prompt, alt_text: assets.alt_text || story.alt_text, engagement: { reply: assets.reply || "", quote_tweet: assets.quote_tweet || "", poll: assets.poll || "", blog_expansion: assets.blog_expansion || "" } };
-      } catch (error) {
-        console.error("Content format generation failed:", error);
-        return { ...story, engagement: { reply: "Add a specific reaction or question to this story.", quote_tweet: `This development deserves a closer look: ${story.headline}`, poll: ["Question: What matters most here?", "Options: A) Adoption", "B) Innovation", "C) Regulation", "D) Market impact"].join("\n"), blog_expansion: [story.headline, "", "Introduction", story.summary, "", "Key implications", story.reason, "", "Conclusion", story.cta].join("\n\n") } };
-      }
-    }));
+    if (!freshStories.length) return NextResponse.json({ error: "The LLM did not return a story grounded in the verified current candidates. Web3 Pulse refused to display stale or unsupported content.", code: "NO_GROUNDED_STORIES", date: currentDate, agents: packet.agents, verification: packet.verification }, { status: 503 });
 
-    return NextResponse.json({ ...data, date: currentDate, generated_at_utc: now.toISOString(), stories: enriched, research_window: { cutoff_utc: cutoffUtc, hours: 48, candidate_count: freshCandidates.length }, research_sources: packet.narratives, agents: packet.agents, verification: packet.verification, llm_provider: research.provider, llm_model: research.model, client_mode: Boolean(body.clientProfile), client_name: body.clientProfile?.name || null, priority_focus: packet.priority_focus });
+    return NextResponse.json({ ...data, date: currentDate, generated_at_utc: now.toISOString(), stories: freshStories, research_window: { cutoff_utc: cutoffUtc, hours: 48, candidate_count: freshCandidates.length }, research_sources: packet.narratives, agents: packet.agents, verification: packet.verification, llm_provider: generation.provider, llm_model: generation.model, client_mode: Boolean(body.clientProfile), client_name: body.clientProfile?.name || null, priority_focus: packet.priority_focus, llm_calls: 2 });
   } catch (error: any) {
     console.error("Web3 Pulse Multi-Agent Generation Error:", error);
     return NextResponse.json({ error: error?.message || "Failed to generate current multi-agent content intelligence." }, { status: 500 });
