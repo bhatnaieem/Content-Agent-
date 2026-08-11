@@ -4,9 +4,10 @@ type Provider = "auto" | "gemini" | "nemotron" | "openrouter";
 type ConcreteProvider = Exclude<Provider,"auto">;
 type GenerateOptions = { system:string; user:string; responseFormat?:"json_object"; temperature?:number; provider?:Provider };
 
-// Keep enough time for Nemotron to answer, while reserving time for fallback providers.
-const LLM_TIMEOUT_MS=9000;
-const LLM_BUDGET_MS=24000;
+// Provider calls can legitimately take several seconds. Keep a bounded request budget,
+// but do not abort healthy providers after an overly aggressive 7-9s ceiling.
+const LLM_TIMEOUT_MS=12000;
+const LLM_BUDGET_MS=26000;
 
 type Health={failures:number;cooldownUntil:number;lastError?:string};
 const health:Record<ConcreteProvider,Health>={gemini:{failures:0,cooldownUntil:0},nemotron:{failures:0,cooldownUntil:0},openrouter:{failures:0,cooldownUntil:0}};
@@ -31,17 +32,18 @@ function clientFor(provider:ConcreteProvider){
 function modelFor(provider:ConcreteProvider){
   if(provider==="gemini") return process.env.GEMINI_MODEL||"gemini-3.6-flash";
   if(provider==="nemotron") return process.env.NEMOTRON_MODEL||"nvidia/nemotron-3-ultra-550b-a55b";
-  // Do not pin Web3 Pulse to a shared free model. OpenRouter can select a healthy model/provider itself.
+  // Do not pin Web3 Pulse to a shared free model. OpenRouter selects a healthy model/provider.
   return process.env.OPENROUTER_MODEL||"openrouter/auto";
 }
 function isRateLimited(error:unknown){const e=error as {status?:number;code?:string;message?:string}|undefined;return e?.status===429||e?.code==="429"||/rate.?limit|quota|too many requests|resource.?exhausted/i.test(e?.message||"");}
 function statusOf(error:unknown){const e=error as {status?:number;code?:string;message?:string}|undefined;return e?.status||Number(e?.code)||0;}
+function isAbort(error:unknown){const e=error as {name?:string;message?:string}|undefined;return e?.name==="AbortError"||/request was aborted|aborted the request|signal is aborted/i.test(e?.message||"");}
 function cleanJson(content:string){return content.replace(/^\s*```(?:json)?\s*/i,"").replace(/\s*```\s*$/i,"").trim()}
 function isValidJsonObject(value:string){try{const parsed=JSON.parse(cleanJson(value));return Boolean(parsed&&typeof parsed==="object"&&!Array.isArray(parsed));}catch{return false;}}
 function configured():ConcreteProvider[]{return ["nemotron","openrouter","gemini"].filter(p=>Boolean(p==="nemotron"?process.env.NEMOTRON_API_KEY:p==="gemini"?process.env.GEMINI_API_KEY:process.env.OPENROUTER_API_KEY)) as ConcreteProvider[];}
 function orderedProviders():ConcreteProvider[]{const all=configured();if(!all.length)return[];const now=Date.now();const available=all.filter(p=>health[p].cooldownUntil<=now);const pool=available.length?available:all;const start=roundRobin++%pool.length;return pool.slice(start).concat(pool.slice(0,start)).sort((a,b)=>health[a].failures-health[b].failures);}
 function markSuccess(provider:ConcreteProvider){health[provider]={failures:0,cooldownUntil:0};}
-function markFailure(provider:ConcreteProvider,error:unknown){const code=statusOf(error);const rate=isRateLimited(error);const cooldown=rate?30000:code===401||code===403?300000:code===404?600000:code>=500?30000:15000;health[provider]={failures:health[provider].failures+1,cooldownUntil:Date.now()+cooldown,lastError:error instanceof Error?error.message:String(error)};}
+function markFailure(provider:ConcreteProvider,error:unknown){const code=statusOf(error);const rate=isRateLimited(error);const abort=isAbort(error);const cooldown=rate?30000:abort?15000:code===401||code===403?300000:code===404?600000:code>=500?30000:15000;health[provider]={failures:health[provider].failures+1,cooldownUntil:Date.now()+cooldown,lastError:error instanceof Error?error.message:String(error)};}
 
 export async function generateWithLLM(options:GenerateOptions){
   const requested=options.provider||"auto";
@@ -49,6 +51,7 @@ export async function generateWithLLM(options:GenerateOptions){
   if(!providers.length) throw new Error("No LLM provider is configured. Add NEMOTRON_API_KEY, OPENROUTER_API_KEY or GEMINI_API_KEY.");
   const deadline=Date.now()+LLM_BUDGET_MS;
   let lastError:unknown;
+  let sawAbort=false;
   for(const provider of providers){
     if(requested==="auto"&&health[provider].cooldownUntil>Date.now())continue;
     const remaining=deadline-Date.now();
@@ -70,12 +73,14 @@ export async function generateWithLLM(options:GenerateOptions){
       }finally{clearTimeout(timer)}
     }catch(error){
       lastError=error;
+      sawAbort=sawAbort||isAbort(error);
       markFailure(provider,error);
       console.error(`Web3 Pulse ${provider}/${model} error:`,error);
       if(requested!=="auto")break;
     }
   }
   if(isRateLimited(lastError))throw new Error("All available LLM providers are currently rate-limited. Web3 Pulse stopped without generating stale content.");
+  if(sawAbort)throw new Error("LLM providers timed out before returning a response. Web3 Pulse stopped without generating stale content.");
   throw new Error(lastError instanceof Error?lastError.message:"All available LLM providers failed.");
 }
 
