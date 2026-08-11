@@ -25,7 +25,8 @@ type HistoryRow = {
   content_fingerprint: string;
 };
 
-const MEMORY_WINDOW_DAYS = 7;
+// Prevent immediate repeats, but don't block an entire topic for a week.
+const MEMORY_WINDOW_HOURS = 24;
 
 let cached: SupabaseClient | null = null;
 
@@ -42,24 +43,17 @@ export function normalizeHeadline(value: string) {
   return value.toLowerCase().replace(/https?:\/\/\S+/g, " ").replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
 }
 
-function tokens(value: string) {
-  return new Set(normalizeHeadline(value).split(" ").filter((x) => x.length > 2));
-}
-
-function similarity(a: string, b: string) {
-  const aa = tokens(a); const bb = tokens(b);
-  if (!aa.size || !bb.size) return 0;
-  let intersection = 0;
-  aa.forEach((token) => { if (bb.has(token)) intersection++; });
-  return intersection / (aa.size + bb.size - intersection);
-}
-
-export function fingerprint(headline: string, candidateIds: string[], sourceUrls: string[]) {
+function fingerprint(headline: string, candidateIds: string[], sourceUrls: string[]) {
   return `${normalizeHeadline(headline)}|${[...candidateIds].sort().join(",")}|${sourceUrls.map(normalizeHeadline).sort().join(",")}`;
+}
+
+function memoryCutoff() {
+  return new Date(Date.now() - MEMORY_WINDOW_HOURS * 60 * 60 * 1000).toISOString();
 }
 
 export async function rememberCandidates(candidates: Array<{ id: string; title: string; url: string; source: string; category: string; publishedAt: string }>) {
   if (!candidates.length) return;
+  // Deduplicate the payload itself; Supabase rejects duplicate conflict keys in one upsert.
   const unique = Array.from(new Map(candidates.map((candidate) => [candidate.id, candidate])).values());
   const rows = unique.map((candidate) => ({
     id: candidate.id,
@@ -75,12 +69,11 @@ export async function rememberCandidates(candidates: Array<{ id: string; title: 
   if (error) throw new Error(`Supabase candidate memory failed: ${error.message}`);
 }
 
-export async function getUsedCandidateIds(limit = 500, withinDays = MEMORY_WINDOW_DAYS) {
-  const cutoff = new Date(Date.now() - withinDays * 24 * 60 * 60 * 1000).toISOString();
+export async function getUsedCandidateIds(limit = 500) {
   const { data, error } = await db()
     .from("web3pulse_content_history")
     .select("candidate_ids")
-    .gte("generated_at", cutoff)
+    .gte("generated_at", memoryCutoff())
     .order("generated_at", { ascending: false })
     .limit(limit);
   if (error) throw new Error(`Supabase history lookup failed: ${error.message}`);
@@ -89,12 +82,11 @@ export async function getUsedCandidateIds(limit = 500, withinDays = MEMORY_WINDO
   return [...ids];
 }
 
-export async function getRecentHistory(limit = 300, withinDays = MEMORY_WINDOW_DAYS): Promise<HistoryRow[]> {
-  const cutoff = new Date(Date.now() - withinDays * 24 * 60 * 60 * 1000).toISOString();
+export async function getRecentHistory(limit = 300): Promise<HistoryRow[]> {
   const { data, error } = await db()
     .from("web3pulse_content_history")
     .select("id,headline,normalized_headline,category,candidate_ids,source_urls,generated_at,status,content_fingerprint")
-    .gte("generated_at", cutoff)
+    .gte("generated_at", memoryCutoff())
     .order("generated_at", { ascending: false })
     .limit(limit);
   if (error) throw new Error(`Supabase history lookup failed: ${error.message}`);
@@ -105,13 +97,14 @@ export async function filterPreviouslyCovered<T extends { id: string; title: str
   if (!candidates.length) return candidates;
   const history = await getRecentHistory();
   const usedIds = new Set(history.flatMap((row) => row.candidate_ids || []));
+  const usedUrls = new Set(history.flatMap((row) => (row.source_urls || []).map((url) => normalizeHeadline(url))));
+
+  // Do NOT use headline similarity here. A fresh update about the same protocol/event
+  // can have a similar headline and is still a legitimate new story.
   return candidates.filter((candidate) => {
     if (usedIds.has(candidate.id)) return false;
-    const normalizedUrl = normalizeHeadline(candidate.url);
-    return !history.some((row) => {
-      if ((row.source_urls || []).some((url) => normalizeHeadline(url) === normalizedUrl)) return true;
-      return similarity(candidate.title, row.headline) >= 0.78;
-    });
+    if (usedUrls.has(normalizeHeadline(candidate.url))) return false;
+    return true;
   });
 }
 
