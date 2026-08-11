@@ -29,7 +29,6 @@ export async function POST(request:Request){
     const provider=["auto","gemini","nemotron","openrouter"].includes(body.provider||"")?(body.provider as "auto"|"gemini"|"nemotron"|"openrouter"):"auto";
     const clientExcluded=parseExcludedCookie(request);const requestedExcluded=Array.isArray(body.excludeCandidateIds)?body.excludeCandidateIds.filter(id=>typeof id==="string"&&id.trim()):[];
     const now=new Date();const currentDate=now.toISOString().slice(0,10);const cutoffUtc=new Date(now.getTime()-72*60*60*1000).toISOString();
-    // FAIL CLOSED: persistent memory is mandatory. Never generate or return old content if memory cannot be read.
     try{
       const packet=await runMultiAgentResearch([]);
       let candidates:FreshCandidate[]=packet.candidates.filter(item=>{const t=Date.parse(item.publishedAt);return Number.isFinite(t)&&t>=Date.parse(cutoffUtc)&&t<=now.getTime();}).map(item=>({id:item.id,title:item.title,url:item.url,source:item.source,publishedAt:item.publishedAt,summary:item.summary,category:item.category,keywords:item.keywords,score:item.scores.overall,opportunity:item.opportunity}));
@@ -37,7 +36,6 @@ export async function POST(request:Request){
       candidates=await filterPreviouslyCovered(candidates);
       const excluded=new Set([...clientExcluded,...requestedExcluded]);
       candidates=candidates.filter(c=>!excluded.has(c.id));
-      // Collapse syndicated copies of the same event before the LLM sees them.
       const diverse:FreshCandidate[]=[];
       for(const candidate of candidates.sort((a,b)=>b.score-a.score)){
         if(diverse.some(existing=>similar(candidate.title,existing.title)))continue;
@@ -51,16 +49,17 @@ export async function POST(request:Request){
       let generation=await generateWithLLM({provider,system:CONTENT_PROMPT,user:userPrompt,responseFormat:"json_object",temperature:0.35});
       let data:any;try{data=parseLLMJson(generation.content);}catch{return NextResponse.json({error:"The selected LLM returned malformed structured output.",code:"INVALID_LLM_JSON",provider:generation.provider,model:generation.model},{status:502});}
       let rawStories=Array.isArray(data.stories)?data.stories:[];
-      let stories=rawStories.map((s:any,i:number)=>normalizeStory(s,diverse,i)).filter((s:Story|null):s is Story=>s!==null);
+      let stories:Story[]=rawStories.map((s:any,i:number)=>normalizeStory(s,diverse,i)).filter((s:Story|null):s is Story=>s!==null);
       stories=await filterGeneratedDuplicates(stories);
       if(stories.length<targetCount){
-        const used=new Set(stories.flatMap(s=>s.candidate_ids));const remaining=diverse.filter(c=>!used.has(c.id)).slice(0,targetCount-stories.length);
+        const used=new Set<string>(stories.flatMap((s:Story)=>s.candidate_ids));
+        const remaining=diverse.filter(c=>!used.has(c.id)).slice(0,targetCount-stories.length);
         if(remaining.length){const retry=`${context}\nRETRY: Generate exactly ${remaining.length} NEW stories using ONLY these unused candidate IDs: ${remaining.map(c=>c.id).join(", ")}. One unique candidate_id per story. Do not reuse any event already represented. Return ONLY JSON with stories.`;try{generation=await generateWithLLM({provider,system:CONTENT_PROMPT,user:retry,responseFormat:"json_object",temperature:0.45});data=parseLLMJson(generation.content);rawStories=Array.isArray(data.stories)?data.stories:[];const retryStories=rawStories.map((s:any,i:number)=>normalizeStory(s,remaining,i)).filter((s:Story|null):s is Story=>s!==null);stories=await filterGeneratedDuplicates([...stories,...retryStories]);}catch(error){console.warn("Duplicate-safe retry failed",error);}}
       }
       if(!stories.length)return NextResponse.json({date:currentDate,generated_at_utc:now.toISOString(),stories:[],no_new_stories:true,code:"DUPLICATE_GUARD_BLOCKED",error:"No genuinely new stories survived the duplicate guard. Nothing old was returned.",candidate_count:diverse.length,memory:"supabase"},{status:200});
       try{await saveGeneratedStories(stories.map(story=>({headline:story.headline,category:story.category,candidate_ids:story.candidate_ids,source_urls:story.sources,content:story,status:"generated",generated_at:now.toISOString(),llm_provider:generation.provider,llm_model:generation.model})))}catch(error){return NextResponse.json({error:"Persistent content memory could not be written. Nothing was returned to prevent duplicates.",code:"MEMORY_WRITE_FAILED",detail:error instanceof Error?error.message:"Supabase write failed"},{status:503});}
       const response=NextResponse.json({...data,date:currentDate,generated_at_utc:now.toISOString(),stories,research_window:{cutoff_utc:cutoffUtc,hours:72,candidate_count:diverse.length},llm_provider:generation.provider,llm_model:generation.model,client_mode:Boolean(body.clientProfile),client_name:body.clientProfile?.name||null,llm_calls:2,elapsed_ms:Date.now()-started,memory:"supabase"});
-      const newlyUsed=stories.flatMap(s=>s.candidate_ids);response.cookies.set("web3pulse_excluded",encodeURIComponent(JSON.stringify(Array.from(new Set([...clientExcluded,...requestedExcluded,...newlyUsed])).slice(-5000))),{httpOnly:true,sameSite:"lax",secure:true,path:"/",maxAge:60*60*24*365});return response;
+      const newlyUsed=stories.flatMap((s:Story)=>s.candidate_ids);response.cookies.set("web3pulse_excluded",encodeURIComponent(JSON.stringify(Array.from(new Set([...clientExcluded,...requestedExcluded,...newlyUsed])).slice(-5000))),{httpOnly:true,sameSite:"lax",secure:true,path:"/",maxAge:60*60*24*365});return response;
     }catch(error){console.error("Duplicate memory/research gate failed:",error);return NextResponse.json({error:"Persistent duplicate protection is unavailable. Generation was blocked so an old story cannot be shown again.",code:"MEMORY_REQUIRED",detail:error instanceof Error?error.message:"Memory unavailable",elapsed_ms:Date.now()-started},{status:503});}
   }catch(error:any){console.error("Web3 Pulse Generation Error:",error);return NextResponse.json({error:error?.message||"Failed to generate current Web3 Pulse intelligence.",code:"GENERATION_ERROR",elapsed_ms:Date.now()-started},{status:500});}
 }
