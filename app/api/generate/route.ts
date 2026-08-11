@@ -12,14 +12,70 @@ type Story = { headline:string; category:string; score:number; format:"thread"|"
 type FreshCandidate = { id:string; title:string; url:string; source:string; publishedAt:string; summary:string; category:string; keywords:string[]; score:number; opportunity:string };
 type GenerateBody = { provider?:string; clientProfile?:ClientProfile; excludeCandidateIds?:string[] };
 
-const CONTENT_PROMPT = `You are the Web3 Pulse Content Director Agent. Work ONLY from the supplied VERIFIED CURRENT candidates. Do not use model memory to add current events, old facts, invented claims, sources, URLs or dates. PRIORITY ORDER: 1. Exploits & Hacks 2. Airdrops 3. Airdrop Guides 4. Other high-interest Web3 only when no stronger priority candidate exists. Select the strongest 1-2 opportunities from the supplied candidates. Candidates excluded by the research system must never be recreated. For every story, candidate_ids MUST contain the exact supplied candidate id. Preserve exact supplied source URLs. Every story must be traceable to at least one supplied candidate. Generate master thread, single X post, reply, quote tweet, poll with exactly 4 choices, blog expansion, creative/image prompt and alt text. Make every format genuinely different. Never invent airdrop eligibility, tasks, claim links, rewards or deadlines. Never invent security-incident users, losses, attacker identity or remediation. Return ONLY valid JSON.`;
+const CONTENT_PROMPT = `You are the Web3 Pulse Content Director Agent. Work ONLY from the supplied VERIFIED CURRENT candidates. Do not use model memory to add current events, old facts, invented claims, sources, URLs or dates. PRIORITY ORDER: 1. Exploits & Hacks 2. Airdrops 3. Airdrop Guides 4. Other high-interest Web3 only when no stronger priority candidate exists. Select the strongest 1-2 opportunities from the supplied candidates. Candidates excluded by the research system must never be recreated. For every story, candidate_ids SHOULD contain the exact supplied candidate id when possible. Preserve exact supplied source URLs. Every story must be traceable to at least one supplied candidate. Generate master thread, single X post, reply, quote tweet, poll with exactly 4 choices, blog expansion, creative/image prompt and alt text. Make every format genuinely different. Never invent airdrop eligibility, tasks, claim links, rewards or deadlines. Never invent security-incident users, losses, attacker identity or remediation. Return ONLY valid JSON.`;
 
 function clientContext(client?:ClientProfile){if(!client)return "";return ["","CLIENT PROFILE",`Name: ${client.name||""}`,`Description: ${client.description||""}`,`Sector: ${client.sector||""}`,`Chains/ecosystems: ${client.chains||""}`,`Priority topics: ${client.topics||""}`,`Competitors: ${client.competitors||""}`,`Audience: ${client.audience||""}`,`Tone: ${client.tone||""}`,`PR objectives: ${client.objectives||""}`,`Avoid/guardrails: ${client.avoid||""}`].join("\n");}
 function normalizeUrl(url:string){return String(url||"").trim().replace(/\/$/,"");}
-function parseExcludedCookie(request:Request):string[]{const raw=request.headers.get("cookie")||"";const match=raw.match(/(?:^|;\s*)web3pulse_excluded=([^;]+)/);if(!match)return [];try{const parsed=JSON.parse(decodeURIComponent(match[1]));return Array.isArray(parsed)?parsed.filter(id=>typeof id==="string").slice(-50):[];}catch{return [];}}
-function resolveCandidateIds(story:any,candidates:FreshCandidate[]):string[]{const byId=new Map(candidates.map(c=>[c.id,c]));const explicit=Array.isArray(story?.candidate_ids)?story.candidate_ids:[story?.candidate_id];const ids=explicit.filter((id:unknown)=>typeof id==="string"&&byId.has(id));if(ids.length)return Array.from(new Set(ids));const urls=new Set<string>();if(Array.isArray(story?.sources))for(const url of story.sources)if(typeof url==="string")urls.add(normalizeUrl(url));if(Array.isArray(story?.source_details))for(const detail of story.source_details)if(typeof detail?.url==="string")urls.add(normalizeUrl(detail.url));const urlMatches=candidates.filter(c=>urls.has(normalizeUrl(c.url))).map(c=>c.id);if(urlMatches.length)return Array.from(new Set(urlMatches));if(candidates.length===1)return [candidates[0].id];const headline=String(story?.headline||story?.thread?.title||"").toLowerCase().trim();if(headline){const matches=candidates.filter(c=>{const title=c.title.toLowerCase().trim();return title===headline||title.includes(headline)||headline.includes(title);}).map(c=>c.id);if(matches.length===1)return matches;}return [];}
-function normalizeStory(story:any,candidates:FreshCandidate[]):Story|null{const ids=resolveCandidateIds(story,candidates);if(!ids.length)return null;const candidateMap=new Map(candidates.map(c=>[c.id,c]));const supported=ids.map(id=>candidateMap.get(id)).filter(item=>item!==undefined) as FreshCandidate[];if(!supported.length)return null;const first=supported[0];const threadSource=story?.thread&&typeof story.thread==="object"?story.thread:{};const engagement=story?.engagement&&typeof story.engagement==="object"?story.engagement:{};const tweets=Array.isArray(threadSource.tweets)?threadSource.tweets.filter((x:unknown)=>typeof x==="string"&&x.trim().length>0) as string[]:[];const sourceDetails:SourceDetail[]=supported.map(item=>({name:item.source,url:item.url,published_at:item.publishedAt}));return {headline:String(story?.headline||first.title),category:String(story?.category||first.category||"Emerging"),score:Number.isFinite(Number(story?.score))?Number(story.score):first.score,format:story?.format==="single post"?"single post":"thread",reason:String(story?.reason||first.opportunity||"Current verified Web3 development."),summary:String(story?.summary||first.summary||""),keywords:Array.isArray(story?.keywords)?story.keywords.filter((x:unknown)=>typeof x==="string") as string[]:first.keywords||[],hashtags:Array.isArray(story?.hashtags)?story.hashtags.filter((x:unknown)=>typeof x==="string") as string[]:[],sources:sourceDetails.map(x=>x.url),source_details:sourceDetails,posting_time_utc:String(story?.posting_time_utc||first.publishedAt),cta:String(story?.cta||"Review the source before publishing."),graphic_prompt:String(story?.graphic_prompt||`Create a premium editorial Web3 visual for: ${story?.headline||first.title}.`),alt_text:String(story?.alt_text||`Editorial visual representing ${story?.headline||first.title}.`),thread:{title:String(threadSource.title||story?.headline||first.title),tweets:tweets.length?tweets:[String(story?.summary||first.summary||story?.headline||first.title)]},engagement:{reply:String(engagement.reply||""),quote_tweet:String(engagement.quote_tweet||""),poll:String(engagement.poll||""),blog_expansion:String(engagement.blog_expansion||"")},candidate_ids:ids};}
-function parseLLMJson(content:string):any{const cleaned=content.replace(/^\s*```(?:json)?\s*/i,"").replace(/\s*```\s*$/i,"").trim();try{return JSON.parse(cleaned);}catch{}const start=cleaned.indexOf("{");if(start<0)throw new Error("LLM returned no JSON object.");let depth=0,inString=false,escaped=false;for(let i=start;i<cleaned.length;i++){const ch=cleaned[i];if(inString){if(escaped)escaped=false;else if(ch==="\\")escaped=true;else if(ch==='"')inString=false;continue;}if(ch==='"'){inString=true;continue;}if(ch==="{")depth++;else if(ch==="}"&&--depth===0){try{return JSON.parse(cleaned.slice(start,i+1));}catch{break;}}}throw new Error("LLM returned invalid JSON.");}
+function parseExcludedCookie(request:Request):string[]{const raw=request.headers.get("cookie")||"";const match=raw.match(/(?:^|;\s*)web3pulse_excluded=([^;]+)/);if(!match)return [];try{const parsed=JSON.parse(decodeURIComponent(match[1]));return Array.isArray(parsed)?parsed.filter(id=>typeof id==="string").slice(-500):[];}catch{return [];}}
+
+// Grounding is deterministic: the backend owns the candidate relationship.
+// The LLM may return IDs, URLs, or a matching headline, but missing/invalid IDs
+// are resolved against the exact candidate pool supplied to that LLM call.
+function resolveCandidateIds(story:any,candidates:FreshCandidate[],fallbackIndex?:number):string[]{
+  const byId=new Map(candidates.map(c=>[c.id,c]));
+  const explicit=Array.isArray(story?.candidate_ids)?story.candidate_ids:[story?.candidate_id];
+  const ids=explicit.filter((id:unknown)=>typeof id==="string"&&byId.has(id));
+  if(ids.length)return Array.from(new Set(ids));
+
+  const urls=new Set<string>();
+  if(Array.isArray(story?.sources))for(const url of story.sources)if(typeof url==="string")urls.add(normalizeUrl(url));
+  if(Array.isArray(story?.source_details))for(const detail of story.source_details)if(typeof detail?.url==="string")urls.add(normalizeUrl(detail.url));
+  const urlMatches=candidates.filter(c=>urls.has(normalizeUrl(c.url))).map(c=>c.id);
+  if(urlMatches.length)return Array.from(new Set(urlMatches));
+
+  const headline=String(story?.headline||story?.thread?.title||"").toLowerCase().trim();
+  if(headline){
+    const matches=candidates.filter(c=>{const title=c.title.toLowerCase().trim();return title===headline||title.includes(headline)||headline.includes(title);}).map(c=>c.id);
+    if(matches.length)return Array.from(new Set(matches));
+  }
+
+  // Last-resort deterministic grounding: the Nth returned story is tied to the
+  // Nth selected candidate. This never introduces a candidate outside the
+  // verified pool and prevents valid content from being discarded just because
+  // a provider omitted the internal ID field.
+  if(typeof fallbackIndex==="number"&&candidates[fallbackIndex])return [candidates[fallbackIndex].id];
+  return [];
+}
+
+function normalizeStory(story:any,candidates:FreshCandidate[],fallbackIndex?:number):Story|null{
+  const ids=resolveCandidateIds(story,candidates,fallbackIndex);if(!ids.length)return null;
+  const candidateMap=new Map(candidates.map(c=>[c.id,c]));
+  const supported=ids.map(id=>candidateMap.get(id)).filter(item=>item!==undefined) as FreshCandidate[];
+  if(!supported.length)return null;
+  const first=supported[0];
+  const threadSource=story?.thread&&typeof story.thread==="object"?story.thread:{};
+  const engagement=story?.engagement&&typeof story.engagement==="object"?story.engagement:{};
+  const tweets=Array.isArray(threadSource.tweets)?threadSource.tweets.filter((x:unknown)=>typeof x==="string"&&x.trim().length>0) as string[]:[];
+  const sourceDetails:SourceDetail[]=supported.map(item=>({name:item.source,url:item.url,published_at:item.publishedAt}));
+  return {
+    headline:String(story?.headline||first.title),category:String(story?.category||first.category||"Emerging"),score:Number.isFinite(Number(story?.score))?Number(story.score):first.score,
+    format:story?.format==="single post"?"single post":"thread",reason:String(story?.reason||first.opportunity||"Current verified Web3 development."),summary:String(story?.summary||first.summary||""),
+    keywords:Array.isArray(story?.keywords)?story.keywords.filter((x:unknown)=>typeof x==="string") as string[]:first.keywords||[],hashtags:Array.isArray(story?.hashtags)?story.hashtags.filter((x:unknown)=>typeof x==="string") as string[]:[],
+    sources:sourceDetails.map(x=>x.url),source_details:sourceDetails,posting_time_utc:String(story?.posting_time_utc||first.publishedAt),cta:String(story?.cta||"Review the source before publishing."),
+    graphic_prompt:String(story?.graphic_prompt||`Create a premium editorial Web3 visual for: ${story?.headline||first.title}.`),alt_text:String(story?.alt_text||`Editorial visual representing ${story?.headline||first.title}.`),
+    thread:{title:String(threadSource.title||story?.headline||first.title),tweets:tweets.length?tweets:[String(story?.summary||first.summary||story?.headline||first.title)]},
+    engagement:{reply:String(engagement.reply||""),quote_tweet:String(engagement.quote_tweet||""),poll:String(engagement.poll||""),blog_expansion:String(engagement.blog_expansion||"")},candidate_ids:ids
+  };
+}
+
+function parseLLMJson(content:string):any{
+  const cleaned=content.replace(/^\s*```(?:json)?\s*/i,"").replace(/\s*```\s*$/i,"").trim();
+  try{return JSON.parse(cleaned);}catch{}
+  const start=cleaned.indexOf("{");if(start<0)throw new Error("LLM returned no JSON object.");
+  let depth=0,inString=false,escaped=false;
+  for(let i=start;i<cleaned.length;i++){const ch=cleaned[i];if(inString){if(escaped)escaped=false;else if(ch==="\\")escaped=true;else if(ch==='"')inString=false;continue;}if(ch==='"'){inString=true;continue;}if(ch==="{")depth++;else if(ch==="}"&&--depth===0){try{return JSON.parse(cleaned.slice(start,i+1));}catch{break;}}}
+  throw new Error("LLM returned invalid JSON.");
+}
 
 export async function POST(request:Request){
   const started=Date.now();
@@ -41,7 +97,7 @@ export async function POST(request:Request){
     const generation=await generateWithLLM({provider,system:CONTENT_PROMPT,user:`${context}\n\n${candidateContext}\n\nGenerate the COMPLETE CONTENT PACKAGE. Output one JSON object with a stories array.`+clientContext(body.clientProfile),responseFormat:"json_object",temperature:0.1});
     let data:any;try{data=parseLLMJson(generation.content);}catch{return NextResponse.json({error:"The selected LLM returned malformed structured output.",code:"INVALID_LLM_JSON",provider:generation.provider,model:generation.model,date:currentDate},{status:502});}
     const rawStories=Array.isArray(data.stories)?data.stories:[];
-    const stories=rawStories.map((s:any)=>normalizeStory(s,freshCandidates)).filter((s:Story|null):s is Story=>s!==null);
+    const stories=rawStories.map((s:any,index:number)=>normalizeStory(s,freshCandidates,index)).filter((s:Story|null):s is Story=>s!==null);
     const freshStories:Story[]=stories.filter((s:Story)=>s.candidate_ids.every((id:string)=>{const candidate=freshCandidates.find(item=>item.id===id);const t=candidate?Date.parse(candidate.publishedAt):NaN;return Number.isFinite(t)&&t>=Date.parse(cutoffUtc)&&t<=now.getTime();}));
     if(!freshStories.length)return NextResponse.json({error:"The LLM returned no story grounded in the verified current candidates.",code:"NO_GROUNDED_STORIES",date:currentDate,candidate_count:freshCandidates.length,raw_story_count:rawStories.length,llm_provider:generation.provider,llm_model:generation.model},{status:503});
     try{
