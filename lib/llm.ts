@@ -4,10 +4,11 @@ type Provider = "auto" | "gemini" | "nemotron" | "openrouter";
 type ConcreteProvider = Exclude<Provider,"auto">;
 type GenerateOptions = { system:string; user:string; responseFormat?:"json_object"; temperature?:number; provider?:Provider };
 
-// Provider calls can legitimately take several seconds. Keep a bounded request budget,
-// but do not abort healthy providers after an overly aggressive 7-9s ceiling.
-const LLM_TIMEOUT_MS=12000;
-const LLM_BUDGET_MS=26000;
+// Do not serialize slow providers. In auto mode we race the configured providers and
+// keep the first valid response. This prevents one slow provider from consuming the
+// whole Vercel request before the next provider gets a chance.
+const LLM_TIMEOUT_MS=20000;
+const LLM_BUDGET_MS=45000;
 
 type Health={failures:number;cooldownUntil:number;lastError?:string};
 const health:Record<ConcreteProvider,Health>={gemini:{failures:0,cooldownUntil:0},nemotron:{failures:0,cooldownUntil:0},openrouter:{failures:0,cooldownUntil:0}};
@@ -32,7 +33,7 @@ function clientFor(provider:ConcreteProvider){
 function modelFor(provider:ConcreteProvider){
   if(provider==="gemini") return process.env.GEMINI_MODEL||"gemini-3.6-flash";
   if(provider==="nemotron") return process.env.NEMOTRON_MODEL||"nvidia/nemotron-3-ultra-550b-a55b";
-  // Do not pin Web3 Pulse to a shared free model. OpenRouter selects a healthy model/provider.
+  // OpenRouter Auto Router chooses the model per request. It is not the free-model router.
   return process.env.OPENROUTER_MODEL||"openrouter/auto";
 }
 function isRateLimited(error:unknown){const e=error as {status?:number;code?:string;message?:string}|undefined;return e?.status===429||e?.code==="429"||/rate.?limit|quota|too many requests|resource.?exhausted/i.test(e?.message||"");}
@@ -45,43 +46,63 @@ function orderedProviders():ConcreteProvider[]{const all=configured();if(!all.le
 function markSuccess(provider:ConcreteProvider){health[provider]={failures:0,cooldownUntil:0};}
 function markFailure(provider:ConcreteProvider,error:unknown){const code=statusOf(error);const rate=isRateLimited(error);const abort=isAbort(error);const cooldown=rate?30000:abort?15000:code===401||code===403?300000:code===404?600000:code>=500?30000:15000;health[provider]={failures:health[provider].failures+1,cooldownUntil:Date.now()+cooldown,lastError:error instanceof Error?error.message:String(error)};}
 
+async function attempt(provider:ConcreteProvider,options:GenerateOptions,signal:AbortSignal){
+  const model=modelFor(provider);
+  const client=clientFor(provider);
+  const request={model,messages:[{role:"system",content:options.system},{role:"user",content:options.user}],...(options.responseFormat?{response_format:{type:options.responseFormat}}:{}),temperature:options.temperature??0.2};
+  const response=await client.chat.completions.create(request as any,{signal} as any);
+  const content=response.choices[0]?.message?.content;
+  if(!content)throw new Error(`${provider}/${model} returned an empty response.`);
+  if(options.responseFormat&&!isValidJsonObject(content))throw new Error(`${provider}/${model} returned malformed JSON.`);
+  return {content:cleanJson(content),provider,model};
+}
+
 export async function generateWithLLM(options:GenerateOptions){
   const requested=options.provider||"auto";
   const providers:ConcreteProvider[]=requested!=="auto"?[requested]:orderedProviders();
   if(!providers.length) throw new Error("No LLM provider is configured. Add NEMOTRON_API_KEY, OPENROUTER_API_KEY or GEMINI_API_KEY.");
-  const deadline=Date.now()+LLM_BUDGET_MS;
-  let lastError:unknown;
-  let sawAbort=false;
-  for(const provider of providers){
-    if(requested==="auto"&&health[provider].cooldownUntil>Date.now())continue;
-    const remaining=deadline-Date.now();
-    if(remaining<1500)break;
-    const model=modelFor(provider);
-    const attemptTimeout=Math.min(LLM_TIMEOUT_MS,Math.max(1500,remaining-750));
+
+  // Explicit provider: one controlled attempt with the full timeout.
+  if(requested!=="auto"){
+    const controller=new AbortController();
+    const timer=setTimeout(()=>controller.abort(),LLM_TIMEOUT_MS);
     try{
-      const client=clientFor(provider);
-      const request={model,messages:[{role:"system",content:options.system},{role:"user",content:options.user}],...(options.responseFormat?{response_format:{type:options.responseFormat}}:{}),temperature:options.temperature??0.2};
-      const controller=new AbortController();
-      const timer=setTimeout(()=>controller.abort(),attemptTimeout);
-      try{
-        const response=await client.chat.completions.create(request as any,{signal:controller.signal} as any);
-        const content=response.choices[0]?.message?.content;
-        if(!content)throw new Error(`${provider}/${model} returned an empty response.`);
-        if(options.responseFormat&&!isValidJsonObject(content))throw new Error(`${provider}/${model} returned malformed JSON.`);
-        markSuccess(provider);
-        return {content:cleanJson(content),provider,model};
-      }finally{clearTimeout(timer)}
+      const result=await attempt(requested,options,controller.signal);
+      markSuccess(requested);
+      return result;
     }catch(error){
-      lastError=error;
-      sawAbort=sawAbort||isAbort(error);
-      markFailure(provider,error);
-      console.error(`Web3 Pulse ${provider}/${model} error:`,error);
-      if(requested!=="auto")break;
-    }
+      markFailure(requested,error);
+      console.error(`Web3 Pulse ${requested}/${modelFor(requested)} error:`,error);
+      if(isRateLimited(error))throw new Error(`${requested} is currently rate-limited. Web3 Pulse stopped without generating stale content.`);
+      if(isAbort(error))throw new Error(`${requested} timed out before returning a response.`);
+      throw error instanceof Error?error:new Error(String(error));
+    }finally{clearTimeout(timer)}
   }
-  if(isRateLimited(lastError))throw new Error("All available LLM providers are currently rate-limited. Web3 Pulse stopped without generating stale content.");
-  if(sawAbort)throw new Error("LLM providers timed out before returning a response. Web3 Pulse stopped without generating stale content.");
-  throw new Error(lastError instanceof Error?lastError.message:"All available LLM providers failed.");
+
+  // Auto mode: race healthy configured providers instead of waiting for them serially.
+  const active=providers.filter(p=>health[p].cooldownUntil<=Date.now());
+  const pool=active.length?active:providers;
+  const controllers=pool.map(()=>new AbortController());
+  const globalTimer=setTimeout(()=>controllers.forEach(c=>c.abort()),LLM_BUDGET_MS);
+  const attempts=pool.map((provider,index)=>attempt(provider,options,controllers[index].signal).then(result=>({ok:true as const,result,provider})).catch(error=>({ok:false as const,error,provider})));
+  try{
+    const results=await Promise.all(attempts);
+    const success=results.find(item=>item.ok);
+    if(success){
+      markSuccess(success.provider);
+      controllers.forEach(c=>c.abort());
+      return success.result;
+    }
+    let sawRate=false;
+    let sawAbort=false;
+    let lastError:unknown;
+    for(const item of results){
+      if(!item.ok){lastError=item.error;sawRate=sawRate||isRateLimited(item.error);sawAbort=sawAbort||isAbort(item.error);markFailure(item.provider,item.error);console.error(`Web3 Pulse ${item.provider}/${modelFor(item.provider)} error:`,item.error);}
+    }
+    if(sawRate)throw new Error("All available LLM providers are currently rate-limited. Web3 Pulse stopped without generating stale content.");
+    if(sawAbort)throw new Error("LLM providers timed out before returning a response. Web3 Pulse stopped without generating stale content.");
+    throw lastError instanceof Error?lastError:new Error("All available LLM providers failed.");
+  }finally{clearTimeout(globalTimer);controllers.forEach(c=>c.abort())}
 }
 
 export function configuredProviders(){return {openrouter:Boolean(process.env.OPENROUTER_API_KEY),gemini:Boolean(process.env.GEMINI_API_KEY),nemotron:Boolean(process.env.NEMOTRON_API_KEY)};}
