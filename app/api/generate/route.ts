@@ -3,7 +3,9 @@ import { generateWithLLM } from "../../../lib/llm";
 import { runMultiAgentResearch } from "../../../lib/multi-agent";
 
 export const runtime = "nodejs";
-export const maxDuration = 30;
+// Research + live LLM inference can exceed the old 30s ceiling. Vercel supports
+// longer Node.js functions, and this route now has its own bounded LLM budget.
+export const maxDuration = 60;
 
 type SourceDetail = { name: string; url: string; published_at: string };
 type ClientProfile = { name?: string; description?: string; sector?: string; chains?: string; topics?: string; competitors?: string; audience?: string; tone?: string; objectives?: string; avoid?: string };
