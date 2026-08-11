@@ -4,13 +4,13 @@ type Provider = "auto" | "gemini" | "nemotron" | "openrouter";
 type ConcreteProvider = Exclude<Provider,"auto">;
 type GenerateOptions = { system:string; user:string; responseFormat?:"json_object"; temperature?:number; provider?:Provider };
 
-// Do not serialize slow providers. In auto mode we race the configured providers and
-// keep the first valid response. This prevents one slow provider from consuming the
-// whole Vercel request before the next provider gets a chance.
-const LLM_TIMEOUT_MS=20000;
-const LLM_BUDGET_MS=45000;
+// Keep each provider fast enough for a Vercel serverless request. Auto mode races
+// configured providers and returns the first valid response instead of waiting for
+// every provider to finish.
+const LLM_TIMEOUT_MS=15000;
+const LLM_BUDGET_MS=25000;
 
-type Health={failures:number;cooldownUntil:number;lastError?:string};
+ type Health={failures:number;cooldownUntil:number;lastError?:string};
 const health:Record<ConcreteProvider,Health>={gemini:{failures:0,cooldownUntil:0},nemotron:{failures:0,cooldownUntil:0},openrouter:{failures:0,cooldownUntil:0}};
 let roundRobin=0;
 
@@ -33,7 +33,6 @@ function clientFor(provider:ConcreteProvider){
 function modelFor(provider:ConcreteProvider){
   if(provider==="gemini") return process.env.GEMINI_MODEL||"gemini-3.6-flash";
   if(provider==="nemotron") return process.env.NEMOTRON_MODEL||"nvidia/nemotron-3-ultra-550b-a55b";
-  // OpenRouter Auto Router chooses the model per request. It is not the free-model router.
   return process.env.OPENROUTER_MODEL||"openrouter/auto";
 }
 function isRateLimited(error:unknown){const e=error as {status?:number;code?:string;message?:string}|undefined;return e?.status===429||e?.code==="429"||/rate.?limit|quota|too many requests|resource.?exhausted/i.test(e?.message||"");}
@@ -49,8 +48,12 @@ function markFailure(provider:ConcreteProvider,error:unknown){const code=statusO
 async function attempt(provider:ConcreteProvider,options:GenerateOptions,signal:AbortSignal){
   const model=modelFor(provider);
   const client=clientFor(provider);
-  const request={model,messages:[{role:"system",content:options.system},{role:"user",content:options.user}],...(options.responseFormat?{response_format:{type:options.responseFormat}}:{}),temperature:options.temperature??0.2};
-  const response=await client.chat.completions.create(request as any,{signal} as any);
+  const request:any={model,messages:[{role:"system",content:options.system},{role:"user",content:options.user}],max_tokens:6000,...(options.responseFormat?{response_format:{type:options.responseFormat}}:{}),temperature:options.temperature??0.2};
+  // Nemotron can spend a large amount of time reasoning by default. Content
+  // generation is a structured editorial task, so disable thinking for predictable
+  // latency on Vercel while keeping the model available as a fallback.
+  if(provider==="nemotron") request.extra_body={chat_template_kwargs:{enable_thinking:false}};
+  const response=await client.chat.completions.create(request,{signal} as any);
   const content=response.choices[0]?.message?.content;
   if(!content)throw new Error(`${provider}/${model} returned an empty response.`);
   if(options.responseFormat&&!isValidJsonObject(content))throw new Error(`${provider}/${model} returned malformed JSON.`);
@@ -62,7 +65,6 @@ export async function generateWithLLM(options:GenerateOptions){
   const providers:ConcreteProvider[]=requested!=="auto"?[requested]:orderedProviders();
   if(!providers.length) throw new Error("No LLM provider is configured. Add NEMOTRON_API_KEY, OPENROUTER_API_KEY or GEMINI_API_KEY.");
 
-  // Explicit provider: one controlled attempt with the full timeout.
   if(requested!=="auto"){
     const controller=new AbortController();
     const timer=setTimeout(()=>controller.abort(),LLM_TIMEOUT_MS);
@@ -79,29 +81,30 @@ export async function generateWithLLM(options:GenerateOptions){
     }finally{clearTimeout(timer)}
   }
 
-  // Auto mode: race healthy configured providers instead of waiting for them serially.
   const active=providers.filter(p=>health[p].cooldownUntil<=Date.now());
   const pool=active.length?active:providers;
   const controllers=pool.map(()=>new AbortController());
   const globalTimer=setTimeout(()=>controllers.forEach(c=>c.abort()),LLM_BUDGET_MS);
-  const attempts=pool.map((provider,index)=>attempt(provider,options,controllers[index].signal).then(result=>({ok:true as const,result,provider})).catch(error=>({ok:false as const,error,provider})));
+  const attempts=pool.map((provider,index)=>attempt(provider,options,controllers[index].signal).catch(error=>{
+    markFailure(provider,error);
+    console.error(`Web3 Pulse ${provider}/${modelFor(provider)} error:`,error);
+    throw error;
+  }));
+
   try{
-    const results=await Promise.all(attempts);
-    const success=results.find(item=>item.ok);
-    if(success){
-      markSuccess(success.provider);
-      controllers.forEach(c=>c.abort());
-      return success.result;
+    try{
+      const result=await Promise.any(attempts);
+      markSuccess(result.provider);
+      return result;
+    }catch(error){
+      const reasons=error instanceof AggregateError?error.errors:[];
+      const sawRate=reasons.some(isRateLimited);
+      const sawAbort=reasons.some(isAbort);
+      if(sawRate&&!reasons.some((reason)=>!isRateLimited(reason)&&!isAbort(reason)))throw new Error("All available LLM providers are currently rate-limited. Web3 Pulse stopped without generating stale content.");
+      if(sawAbort&&!reasons.some((reason)=>!isRateLimited(reason)&&!isAbort(reason)))throw new Error("LLM providers timed out before returning a response. Web3 Pulse stopped without generating stale content.");
+      const last=reasons[reasons.length-1];
+      throw last instanceof Error?last:new Error("All available LLM providers failed.");
     }
-    let sawRate=false;
-    let sawAbort=false;
-    let lastError:unknown;
-    for(const item of results){
-      if(!item.ok){lastError=item.error;sawRate=sawRate||isRateLimited(item.error);sawAbort=sawAbort||isAbort(item.error);markFailure(item.provider,item.error);console.error(`Web3 Pulse ${item.provider}/${modelFor(item.provider)} error:`,item.error);}
-    }
-    if(sawRate)throw new Error("All available LLM providers are currently rate-limited. Web3 Pulse stopped without generating stale content.");
-    if(sawAbort)throw new Error("LLM providers timed out before returning a response. Web3 Pulse stopped without generating stale content.");
-    throw lastError instanceof Error?lastError:new Error("All available LLM providers failed.");
   }finally{clearTimeout(globalTimer);controllers.forEach(c=>c.abort())}
 }
 
