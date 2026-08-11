@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { generateWithLLM } from "../../../lib/llm";
 import { runMultiAgentResearch } from "../../../lib/multi-agent";
-import { filterPreviouslyCovered, getUsedCandidateIds, rememberCandidates, saveGeneratedStories } from "../../../lib/content-memory";
+import { filterPreviouslyCovered, getUsedCandidateIds, rememberCandidates, saveGeneratedStories, listContentHistory } from "../../../lib/content-memory";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -35,7 +35,13 @@ export async function POST(request:Request){
     let freshCandidates:FreshCandidate[]=packet.candidates.filter(item=>{const t=Date.parse(item.publishedAt);return Number.isFinite(t)&&t>=Date.parse(cutoffUtc)&&t<=now.getTime();}).map(item=>({id:item.id,title:item.title,url:item.url,source:item.source,publishedAt:item.publishedAt,summary:item.summary,category:item.category,keywords:item.keywords,score:item.scores.overall,opportunity:item.opportunity}));
     try{await rememberCandidates(freshCandidates);freshCandidates=await filterPreviouslyCovered(freshCandidates);}catch(error){console.warn("Supabase duplicate memory unavailable during candidate filtering.",error);}
     if(!freshCandidates.length){
+      let fallbackStories:Story[]=[];
+      try{const history=await listContentHistory(5);fallbackStories=history.map((row:any)=>{const content=row.content;const story=content&&typeof content==="object"?content:null;return story&&typeof story.headline==="string"?story as Story:null;}).filter((s:Story|null):s is Story=>Boolean(s));}catch(error){console.warn("History fallback unavailable.",error);}
       const researchFailed=packet.raw_candidate_count===0;
+      if(fallbackStories.length){
+        console.info("Web3 Pulse briefing fallback: returning latest saved stories",{count:fallbackStories.length,raw:packet.raw_candidate_count,fresh:packet.fresh_candidate_count,elapsed_ms:Date.now()-started});
+        return NextResponse.json({date:currentDate,generated_at_utc:now.toISOString(),stories:fallbackStories,briefing_fallback:true,no_new_stories:!researchFailed,research_failed:researchFailed,message:"No new eligible stories were found, so the latest saved verified briefing is shown while the research window refreshes.",code:"HISTORY_FALLBACK",cutoff_utc:cutoffUtc,excluded_count:excludedIds.length,agents:packet.agents,verification:packet.verification,research_sources:packet.narratives,source_health:packet.source_health,raw_candidate_count:packet.raw_candidate_count,fresh_candidate_count:packet.fresh_candidate_count,llm_calls:0,elapsed_ms:Date.now()-started,memory:"supabase"},{status:200});
+      }
       return NextResponse.json({date:currentDate,generated_at_utc:now.toISOString(),stories:[],no_new_stories:!researchFailed,research_failed:researchFailed,error:researchFailed?"Research sources returned no fresh candidates. Web3 Pulse could not build a briefing from the configured sources.":"No new verified stories are available in the current 72-hour research window. Web3 Pulse will not repeat a previously generated story.",code:researchFailed?"RESEARCH_EMPTY":"NO_NEW_STORIES",cutoff_utc:cutoffUtc,excluded_count:excludedIds.length,agents:packet.agents,verification:packet.verification,research_sources:packet.narratives,source_health:packet.source_health,raw_candidate_count:packet.raw_candidate_count,fresh_candidate_count:packet.fresh_candidate_count,llm_calls:0,elapsed_ms:Date.now()-started,memory:"supabase"},{status:200});
     }
     const context=[`CURRENT_DATE: ${currentDate}`,`CURRENT_TIME_UTC: ${now.toISOString()}`,`CUTOFF_UTC: ${cutoffUtc}`,"Only the supplied candidates may be used as factual sources.",`MULTI_AGENT_REPORTS: ${JSON.stringify(packet.agents)}`,`VERIFICATION: ${JSON.stringify(packet.verification)}`,`PRIORITY_FOCUS: ${packet.priority_focus.join(", ")}`,`NARRATIVES: ${JSON.stringify(packet.narratives.slice(0,8))}`].join("\n");
