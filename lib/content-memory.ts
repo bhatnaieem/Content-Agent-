@@ -25,7 +25,10 @@ type HistoryRow = {
   content_fingerprint: string;
 };
 
-const MEMORY_WINDOW_HOURS = 24;
+// News events often remain active for several days and are syndicated across many sources.
+// A 7-day editorial memory prevents the same event from returning every briefing while
+// still allowing genuinely new developments to surface after the window expires.
+const MEMORY_WINDOW_HOURS = 24 * 7;
 
 let cached: SupabaseClient | null = null;
 
@@ -43,7 +46,7 @@ export function normalizeHeadline(value: string) {
 }
 
 function headlineTokens(value: string) {
-  const stop = new Set(["the","a","an","and","or","of","to","from","in","on","for","with","across","after","before","as","at","by","is","are","was","were","this","that","crypto","web3"]);
+  const stop = new Set(["the","a","an","and","or","of","to","from","in","on","for","with","across","after","before","as","at","by","is","are","was","were","this","that","crypto","web3","report","says","saying","new","latest"]);
   return new Set(normalizeHeadline(value).split(" ").filter(token => token.length >= 3 && !stop.has(token)));
 }
 
@@ -91,35 +94,21 @@ function primarySourceUrls(row: Pick<HistoryRow, "source_urls">) {
 }
 
 export async function getUsedCandidateIds(limit = 500) {
-  const { data, error } = await db()
-    .from("web3pulse_content_history")
-    .select("candidate_ids")
-    .gte("generated_at", memoryCutoff())
-    .order("generated_at", { ascending: false })
-    .limit(limit);
+  const { data, error } = await db().from("web3pulse_content_history").select("candidate_ids").gte("generated_at", memoryCutoff()).order("generated_at", { ascending: false }).limit(limit);
   if (error) throw new Error(`Supabase history lookup failed: ${error.message}`);
   const ids = new Set<string>();
   for (const row of data || []) for (const id of primaryCandidateIds(row as HistoryRow)) ids.add(id);
   return [...ids];
 }
 
-export async function getRecentHistory(limit = 300): Promise<HistoryRow[]> {
-  const { data, error } = await db()
-    .from("web3pulse_content_history")
-    .select("id,headline,normalized_headline,category,candidate_ids,source_urls,generated_at,status,content_fingerprint")
-    .gte("generated_at", memoryCutoff())
-    .order("generated_at", { ascending: false })
-    .limit(limit);
+export async function getRecentHistory(limit = 500): Promise<HistoryRow[]> {
+  const { data, error } = await db().from("web3pulse_content_history").select("id,headline,normalized_headline,category,candidate_ids,source_urls,generated_at,status,content_fingerprint").gte("generated_at", memoryCutoff()).order("generated_at", { ascending: false }).limit(limit);
   if (error) throw new Error(`Supabase history lookup failed: ${error.message}`);
   return (data || []) as HistoryRow[];
 }
 
 export async function getLatestSavedStories(limit = 5): Promise<MemoryStory[]> {
-  const { data, error } = await db()
-    .from("web3pulse_content_history")
-    .select("headline,category,candidate_ids,source_urls,content,status,generated_at,llm_provider,llm_model")
-    .order("generated_at", { ascending: false })
-    .limit(limit);
+  const { data, error } = await db().from("web3pulse_content_history").select("headline,category,candidate_ids,source_urls,content,status,generated_at,llm_provider,llm_model").order("generated_at", { ascending: false }).limit(limit);
   if (error) throw new Error(`Supabase latest briefing lookup failed: ${error.message}`);
   return (data || []).map((row: any) => ({
     headline: row.headline,
@@ -140,10 +129,11 @@ export async function filterPreviouslyCovered<T extends { id: string; title: str
   const usedIds = new Set(history.flatMap(primaryCandidateIds));
   const usedUrls = new Set(history.flatMap(primarySourceUrls).map(normalizeHeadline));
   const usedHeadlines = history.map(row => row.headline || row.normalized_headline || "");
-  return candidates.filter((candidate) => {
+  return candidates.filter(candidate => {
     if (usedIds.has(candidate.id)) return false;
     if (usedUrls.has(normalizeHeadline(candidate.url))) return false;
-    if (usedHeadlines.some(headline => headlineSimilarity(candidate.title, headline) >= 0.72)) return false;
+    // A high overlap means this is probably the same real-world event syndicated by another outlet.
+    if (usedHeadlines.some(headline => headlineSimilarity(candidate.title, headline) >= 0.68)) return false;
     return true;
   });
 }
@@ -151,12 +141,18 @@ export async function filterPreviouslyCovered<T extends { id: string; title: str
 export async function saveGeneratedStories(stories: MemoryStory[]) {
   if (!stories.length) return;
   const uniqueByFingerprint = new Map<string, MemoryStory>();
+  const seenCandidateIds = new Set<string>();
+  const seenHeadlines: string[] = [];
   for (const story of stories) {
-    const normalizedStory = {
-      ...story,
-      candidate_ids: Array.isArray(story.candidate_ids) ? story.candidate_ids.slice(0, 1) : [],
-      source_urls: Array.isArray(story.source_urls) ? story.source_urls : [],
-    };
+    const candidateIds = Array.isArray(story.candidate_ids) ? story.candidate_ids.filter(id => typeof id === "string" && id.trim()).slice(0, 1) : [];
+    if (!candidateIds.length) continue;
+    const headline = story.headline || "";
+    // Never persist two stories from one generation that point at the same primary event.
+    if (seenCandidateIds.has(candidateIds[0])) continue;
+    if (seenHeadlines.some(existing => headlineSimilarity(existing, headline) >= 0.68)) continue;
+    seenCandidateIds.add(candidateIds[0]);
+    seenHeadlines.push(headline);
+    const normalizedStory = { ...story, candidate_ids: candidateIds, source_urls: Array.isArray(story.source_urls) ? story.source_urls : [] };
     const key = fingerprint(normalizedStory.headline, normalizedStory.candidate_ids, normalizedStory.source_urls);
     if (!uniqueByFingerprint.has(key)) uniqueByFingerprint.set(key, normalizedStory);
   }
