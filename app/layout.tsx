@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import "./light-theme.css";
+import "./ui-polish.css";
 import PublishNav from "./publish-nav";
 import ClientNav from "./client-nav";
 
