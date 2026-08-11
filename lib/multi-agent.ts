@@ -20,18 +20,17 @@ async function verificationAgent(items:ResearchItem[]):Promise<{report:AgentRepo
 
 function strategistAgent(items:ResearchItem[], excludedIds:Set<string>):{report:AgentReport;selected:ResearchItem[]}{
   const available=items.filter(i=>!excludedIds.has(i.id));
-  const priority=top(available,i=>PRIORITY.includes(i.category)||securityTerms.test(`${i.title} ${i.summary}`)||airdropTerms.test(`${i.title} ${i.summary}`),12);
+  const priority=top(available,i=>PRIORITY.includes(i.category)||securityTerms.test(`${i.title} ${i.summary}`)||airdropTerms.test(`${i.title} ${i.summary}`),15);
   const selected=[...priority];
   const selectedIds=new Set(selected.map(i=>i.id));
-  // Backfill from the strongest remaining categories instead of failing when priority stories are exhausted.
+  // Build a 40-item reserve so persistent memory/URL filtering cannot accidentally starve the Content Director.
   for(const category of FALLBACK){
-    if(selected.length>=20)break;
+    if(selected.length>=40)break;
     const pool=available.filter(i=>!selectedIds.has(i.id)&&(i.category===category||(category==="AI & Agentic"&&aiTerms.test(`${i.title} ${i.summary}`)))).sort((a,b)=>b.scores.overall-a.scores.overall);
-    for(const item of pool){if(selected.length>=20)break;selected.push(item);selectedIds.add(item.id);}
+    for(const item of pool){if(selected.length>=40)break;selected.push(item);selectedIds.add(item.id);}
   }
-  // Final safety net: any fresh verified story is better than returning an empty feed.
-  if(selected.length<20){for(const item of available.slice().sort((a,b)=>b.scores.overall-a.scores.overall)){if(selected.length>=20)break;if(selectedIds.has(item.id))continue;selected.push(item);selectedIds.add(item.id);}}
-  return {selected,report:{name:"Strategist Agent",role:"Build a diverse current opportunity pool with priority stories first and AI/agentic fallback",status:selected.length?"completed":"degraded",findings:[`Reviewed ${available.length} eligible verified candidates.`,`Selected ${priority.length} priority candidates first.`,`Backfilled to ${selected.length} candidates across Web3 categories when priority supply was insufficient.`,`AI/agentic research is included as a fallback lane when the core priority pool is thin.`,`Excluded ${excludedIds.size} candidates from the recent-memory window.`],itemIds:selected.map(i=>i.id)}};
+  if(selected.length<40){for(const item of available.slice().sort((a,b)=>b.scores.overall-a.scores.overall)){if(selected.length>=40)break;if(selectedIds.has(item.id))continue;selected.push(item);selectedIds.add(item.id);}}
+  return {selected,report:{name:"Strategist Agent",role:"Build a deep current opportunity pool with priority stories first and AI/agentic fallback",status:selected.length?"completed":"degraded",findings:[`Reviewed ${available.length} eligible verified candidates.`,`Selected ${priority.length} priority candidates first.`,`Built a ${selected.length}-candidate reserve so duplicate-memory filtering can backfill safely.`,`AI/agentic research is included as a fallback lane when the core priority pool is thin.`,`Excluded ${excludedIds.size} candidates from the recent-memory window.`],itemIds:selected.map(i=>i.id)}};
 }
 
 export async function runMultiAgentResearch(excludedIds:string[]=[]):Promise<MultiAgentPacket>{const research=await runResearch();const items=research.items;const excluded=new Set(excludedIds);const scout=scoutAgent(items);const airdrop=airdropAgent(items);const security=securityAgent(items);const social=socialAgent(items);const ai=aiAgent(items);const verification=await verificationAgent(items);const verifiedItems=items.filter(item=>verification.report.itemIds.includes(item.id));const strategy=strategistAgent(verifiedItems,excluded);return {generated_at_utc:research.generatedAt,current_date:research.generatedAt.slice(0,10),candidates:strategy.selected,narratives:research.narratives,agents:[scout,airdrop,security,social,ai,verification.report,strategy.report],priority_focus:[...PRIORITY,"AI & Agentic"],verification:{verified:verification.verified,needs_review:verification.needs_review,rejected:verification.rejected}}}
