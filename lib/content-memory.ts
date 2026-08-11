@@ -9,17 +9,6 @@ const MEMORY_LIMIT = 5000;
 let cached: SupabaseClient | null = null;
 function db() { if (cached) return cached; const url = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL; const key = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY; if (!url || !key) throw new Error("Supabase is not configured. Add NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SECRET_KEY to Vercel Environment Variables."); cached = createClient(url, key, { auth: { autoRefreshToken: false, persistSession: false } }); return cached; }
 export function normalizeHeadline(value: string) { return value.toLowerCase().replace(/https?:\/\/\S+/g, " ").replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim(); }
-function headlineTokens(value: string) {
-  const stop = new Set(["the","a","an","and","or","of","to","from","in","on","for","with","across","after","before","as","at","by","is","are","was","were","this","that","crypto","web3","report","reports","says","saying","new","latest","today","update","updates","market","markets","price","prices","token","tokens","network","networks","blockchain","protocol","protocols","exchange","exchanges","funding","launch","launched","announces","announced"]);
-  return new Set(normalizeHeadline(value).split(" ").filter(token => token.length >= 4 && !stop.has(token)));
-}
-// Conservative event-level match. Generic crypto vocabulary must never make unrelated stories duplicates.
-export function headlineSimilarity(a: string, b: string) {
-  const aa = headlineTokens(a), bb = headlineTokens(b); if (!aa.size || !bb.size) return 0;
-  let overlap = 0; for (const token of aa) if (bb.has(token)) overlap++;
-  const jaccard = overlap / (aa.size + bb.size - overlap);
-  return overlap >= 5 && jaccard >= 0.80 ? jaccard : 0;
-}
 function fingerprint(headline: string, candidateIds: string[], sourceUrls: string[]) { return `${normalizeHeadline(headline)}|${[...candidateIds].sort().join(",")}|${sourceUrls.map(normalizeHeadline).sort().join(",")}`; }
 function primaryCandidateIds(row: Pick<HistoryRow, "candidate_ids">) { return (Array.isArray(row.candidate_ids) ? row.candidate_ids.filter(id => typeof id === "string" && id.trim()) : []).slice(0, 1); }
 function primarySourceUrls(row: Pick<HistoryRow, "source_urls">) { return (Array.isArray(row.source_urls) ? row.source_urls.filter(url => typeof url === "string" && url.trim()) : []).slice(0, 1); }
@@ -28,16 +17,17 @@ export async function getUsedCandidateIds(limit = MEMORY_LIMIT) { const { data, 
 export async function getRecentHistory(limit = MEMORY_LIMIT): Promise<HistoryRow[]> { const { data, error } = await db().from("web3pulse_content_history").select("id,headline,normalized_headline,category,candidate_ids,source_urls,generated_at,status,content_fingerprint").order("generated_at", { ascending: false }).limit(limit); if (error) throw new Error(`Supabase history lookup failed: ${error.message}`); return (data || []) as HistoryRow[]; }
 export async function getLatestSavedStories(limit = 5): Promise<MemoryStory[]> { const { data, error } = await db().from("web3pulse_content_history").select("headline,category,candidate_ids,source_urls,content,status,generated_at,llm_provider,llm_model").order("generated_at", { ascending: false }).limit(limit); if (error) throw new Error(`Supabase latest briefing lookup failed: ${error.message}`); return (data || []).map((row: any) => ({ headline: row.headline, category: row.category || undefined, candidate_ids: primaryCandidateIds(row as HistoryRow), source_urls: primarySourceUrls(row as HistoryRow), content: row.content, status: row.status, generated_at: row.generated_at, llm_provider: row.llm_provider || undefined, llm_model: row.llm_model || undefined })) as MemoryStory[]; }
 
-// Candidate IDs are feed identifiers, not durable event identities. Never use them alone to reject a newly discovered candidate.
-// Durable duplicate protection is exact URL + conservative event similarity.
+// Keep the pre-generation gate deliberately simple. Feed IDs are not durable event IDs,
+// and fuzzy similarity here can incorrectly block the entire research pool.
+// Permanent protection at this stage is exact source URL or exact normalized headline.
 export async function filterPreviouslyCovered<T extends { id: string; title: string; url: string }>(candidates: T[]) {
   if (!candidates.length) return candidates;
   const history = await getRecentHistory();
   const usedUrls = new Set(history.flatMap(primarySourceUrls).map(normalizeHeadline));
-  const usedHeadlines = history.map(row => row.headline || row.normalized_headline || "");
+  const usedHeadlines = new Set(history.map(row => normalizeHeadline(row.headline || row.normalized_headline || "")));
   return candidates.filter(candidate =>
     !usedUrls.has(normalizeHeadline(candidate.url)) &&
-    !usedHeadlines.some(headline => headlineSimilarity(candidate.title, headline) > 0)
+    !usedHeadlines.has(normalizeHeadline(candidate.title))
   );
 }
 
@@ -45,15 +35,16 @@ export async function filterGeneratedDuplicates<T extends { headline: string; ca
   if (!stories.length) return stories;
   const history = await getRecentHistory();
   const usedUrls = new Set(history.flatMap(primarySourceUrls).map(normalizeHeadline));
-  const usedHeadlines = history.map(row => row.headline || row.normalized_headline || "");
+  const usedHeadlines = new Set(history.map(row => normalizeHeadline(row.headline || row.normalized_headline || "")));
   const accepted: T[] = [];
-  const batchIds = new Set<string>(); const batchUrls = new Set<string>(); const batchHeadlines: string[] = [];
+  const batchIds = new Set<string>(); const batchUrls = new Set<string>(); const batchHeadlines = new Set<string>();
   for (const story of stories) {
     const id = Array.isArray(story.candidate_ids) ? story.candidate_ids[0] : "";
     const urls = Array.isArray(story.sources) ? story.sources.filter(Boolean) : [];
-    const duplicate = !id || batchIds.has(id) || urls.some(url => usedUrls.has(normalizeHeadline(url)) || batchUrls.has(normalizeHeadline(url))) || usedHeadlines.some(h => headlineSimilarity(story.headline, h) > 0) || batchHeadlines.some(h => headlineSimilarity(story.headline, h) > 0);
+    const headline = normalizeHeadline(story.headline);
+    const duplicate = !id || batchIds.has(id) || headline === "" || usedHeadlines.has(headline) || batchHeadlines.has(headline) || urls.some(url => usedUrls.has(normalizeHeadline(url)) || batchUrls.has(normalizeHeadline(url)));
     if (duplicate) continue;
-    batchIds.add(id); for (const url of urls) batchUrls.add(normalizeHeadline(url)); batchHeadlines.push(story.headline); accepted.push(story);
+    batchIds.add(id); for (const url of urls) batchUrls.add(normalizeHeadline(url)); batchHeadlines.add(headline); accepted.push(story);
   }
   return accepted;
 }
