@@ -4,11 +4,10 @@ type Provider = "auto" | "gemini" | "nemotron" | "openrouter";
 type ConcreteProvider = Exclude<Provider,"auto">;
 type GenerateOptions = { system:string; user:string; responseFormat?:"json_object"; temperature?:number; provider?:Provider };
 
-// Keep each provider fast enough for a Vercel serverless request. Auto mode races
-// configured providers and returns the first valid response instead of waiting for
-// every provider to finish.
-const LLM_TIMEOUT_MS=15000;
-const LLM_BUDGET_MS=25000;
+// Give the configured providers enough time to return structured content while
+// keeping the whole auto race inside the Vercel route budget.
+const LLM_TIMEOUT_MS=22000;
+const LLM_BUDGET_MS=30000;
 
  type Health={failures:number;cooldownUntil:number;lastError?:string};
 const health:Record<ConcreteProvider,Health>={gemini:{failures:0,cooldownUntil:0},nemotron:{failures:0,cooldownUntil:0},openrouter:{failures:0,cooldownUntil:0}};
@@ -48,7 +47,10 @@ function markFailure(provider:ConcreteProvider,error:unknown){const code=statusO
 async function attempt(provider:ConcreteProvider,options:GenerateOptions,signal:AbortSignal){
   const model=modelFor(provider);
   const client=clientFor(provider);
-  const request:any={model,messages:[{role:"system",content:options.system},{role:"user",content:options.user}],max_tokens:6000,...(options.responseFormat?{response_format:{type:options.responseFormat}}:{}),temperature:options.temperature??0.2};
+  // Keep the response compact. The downstream schema only needs a handful of
+  // short posts plus metadata, so a smaller generation budget materially reduces
+  // latency and makes large models such as Nemotron much more reliable on Vercel.
+  const request:any={model,messages:[{role:"system",content:options.system},{role:"user",content:options.user}],max_tokens:3500,...(options.responseFormat?{response_format:{type:options.responseFormat}}:{}),temperature:options.temperature??0.2};
   // Nemotron can spend a large amount of time reasoning by default. Content
   // generation is a structured editorial task, so disable thinking for predictable
   // latency on Vercel while keeping the model available as a fallback.
