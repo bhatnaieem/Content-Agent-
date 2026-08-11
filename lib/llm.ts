@@ -31,7 +31,11 @@ function isValidJsonObject(value:string){try{const parsed=JSON.parse(cleanJson(v
 
 export async function generateWithLLM(options:GenerateOptions){
   const requested=options.provider||"auto";
-  const configured:Exclude<Provider,"auto">[]=requested!=="auto"?[requested]:process.env.OPENROUTER_API_KEY?["openrouter"]:process.env.GEMINI_API_KEY?["gemini"]:process.env.NEMOTRON_API_KEY?["nemotron"]:[];
+  const configured:Exclude<Provider,"auto">[]=requested!=="auto"?[requested]:[
+    ...(process.env.NEMOTRON_API_KEY?["nemotron" as const]:[]),
+    ...(process.env.GEMINI_API_KEY?["gemini" as const]:[]),
+    ...(process.env.OPENROUTER_API_KEY?["openrouter" as const]:[])
+  ];
   if(!configured.length) throw new Error("No LLM provider is configured. Add OPENROUTER_API_KEY, GEMINI_API_KEY or NEMOTRON_API_KEY.");
   let lastError:unknown;
   for(const provider of configured){
@@ -54,7 +58,7 @@ export async function generateWithLLM(options:GenerateOptions){
       if(requested!=="auto") break;
     }
   }
-  throw new Error(isRateLimited(lastError)?"The selected LLM provider is currently rate-limited. Try again later or configure another provider explicitly.":lastError instanceof Error?lastError.message:"All configured LLM providers failed.");
+  throw new Error(isRateLimited(lastError)?"All configured LLM providers are currently rate-limited. Try again later or configure another provider.":lastError instanceof Error?lastError.message:"All configured LLM providers failed.");
 }
 
 export function configuredProviders(){return {openrouter:Boolean(process.env.OPENROUTER_API_KEY),gemini:Boolean(process.env.GEMINI_API_KEY),nemotron:Boolean(process.env.NEMOTRON_API_KEY)};}
