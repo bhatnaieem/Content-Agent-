@@ -2,7 +2,7 @@ import OpenAI from "openai";
 
 type Provider = "auto" | "gemini" | "nemotron" | "openrouter";
 type GenerateOptions = { system:string; user:string; responseFormat?:"json_object"; temperature?:number; provider?:Provider };
-const LLM_TIMEOUT_MS=20000;
+const LLM_TIMEOUT_MS=15000;
 
 function clientFor(provider:Exclude<Provider,"auto">){
   if(provider==="gemini"){
