@@ -2,21 +2,22 @@ import OpenAI from "openai";
 
 type Provider = "auto" | "gemini" | "nemotron" | "openrouter";
 type GenerateOptions = { system:string; user:string; responseFormat?:"json_object"; temperature?:number; provider?:Provider };
+const LLM_TIMEOUT_MS=20000;
 
 function clientFor(provider:Exclude<Provider,"auto">){
   if(provider==="gemini"){
     const apiKey=process.env.GEMINI_API_KEY;
     if(!apiKey) throw new Error("GEMINI_API_KEY is not configured.");
-    return new OpenAI({apiKey,baseURL:"https://generativelanguage.googleapis.com/v1beta/openai/"});
+    return new OpenAI({apiKey,baseURL:"https://generativelanguage.googleapis.com/v1beta/openai/",timeout:LLM_TIMEOUT_MS,maxRetries:0});
   }
   if(provider==="nemotron"){
     const apiKey=process.env.NEMOTRON_API_KEY;
     if(!apiKey) throw new Error("NEMOTRON_API_KEY is not configured.");
-    return new OpenAI({apiKey,baseURL:process.env.NEMOTRON_BASE_URL||"https://integrate.api.nvidia.com/v1"});
+    return new OpenAI({apiKey,baseURL:process.env.NEMOTRON_BASE_URL||"https://integrate.api.nvidia.com/v1",timeout:LLM_TIMEOUT_MS,maxRetries:0});
   }
   const apiKey=process.env.OPENROUTER_API_KEY;
   if(!apiKey) throw new Error("OPENROUTER_API_KEY is not configured.");
-  return new OpenAI({apiKey,baseURL:"https://openrouter.ai/api/v1",defaultHeaders:{"HTTP-Referer":process.env.OPENROUTER_SITE_URL||"https://web3pulse.app","X-Title":"Web3 Pulse"}});
+  return new OpenAI({apiKey,baseURL:"https://openrouter.ai/api/v1",timeout:LLM_TIMEOUT_MS,maxRetries:0,defaultHeaders:{"HTTP-Referer":process.env.OPENROUTER_SITE_URL||"https://web3pulse.app","X-Title":"Web3 Pulse"}});
 }
 
 function modelFor(provider:Exclude<Provider,"auto">){
@@ -45,7 +46,6 @@ export async function generateWithLLM(options:GenerateOptions){
       let content=response.choices[0]?.message?.content;
       if(!content) throw new Error(`${provider}/${model} returned an empty response.`);
       if(options.responseFormat&&!isValidJsonObject(content)){
-        // Some free OpenRouter models ignore response_format. Retry once with a stronger plain-text JSON contract.
         response=await client.chat.completions.create({model,messages:[{role:"system",content:`${options.system}\n\nCRITICAL OUTPUT CONTRACT: Return ONLY one valid JSON object. No Markdown, no code fences, no explanation, no preamble.`},{role:"user",content:options.user}],temperature:options.temperature??0.2} as any);
         content=response.choices[0]?.message?.content;
         if(!content||!isValidJsonObject(content)) throw new Error(`${provider}/${model} returned malformed JSON after structured-output retry.`);
