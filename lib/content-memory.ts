@@ -25,7 +25,6 @@ type HistoryRow = {
   content_fingerprint: string;
 };
 
-// Prevent immediate repeats, but don't block an entire topic for a week.
 const MEMORY_WINDOW_HOURS = 24;
 
 let cached: SupabaseClient | null = null;
@@ -53,7 +52,6 @@ function memoryCutoff() {
 
 export async function rememberCandidates(candidates: Array<{ id: string; title: string; url: string; source: string; category: string; publishedAt: string }>) {
   if (!candidates.length) return;
-  // Deduplicate the payload itself; Supabase rejects duplicate conflict keys in one upsert.
   const unique = Array.from(new Map(candidates.map((candidate) => [candidate.id, candidate])).values());
   const rows = unique.map((candidate) => ({
     id: candidate.id,
@@ -98,9 +96,6 @@ export async function filterPreviouslyCovered<T extends { id: string; title: str
   const history = await getRecentHistory();
   const usedIds = new Set(history.flatMap((row) => row.candidate_ids || []));
   const usedUrls = new Set(history.flatMap((row) => (row.source_urls || []).map((url) => normalizeHeadline(url))));
-
-  // Do NOT use headline similarity here. A fresh update about the same protocol/event
-  // can have a similar headline and is still a legitimate new story.
   return candidates.filter((candidate) => {
     if (usedIds.has(candidate.id)) return false;
     if (usedUrls.has(normalizeHeadline(candidate.url))) return false;
@@ -111,22 +106,32 @@ export async function filterPreviouslyCovered<T extends { id: string; title: str
 export async function saveGeneratedStories(stories: MemoryStory[]) {
   if (!stories.length) return;
   const uniqueByFingerprint = new Map<string, MemoryStory>();
-  for (const story of stories) uniqueByFingerprint.set(fingerprint(story.headline, story.candidate_ids, story.source_urls), story);
-  const rows = Array.from(uniqueByFingerprint.values()).map((story) => ({
-    headline: story.headline,
-    normalized_headline: normalizeHeadline(story.headline),
-    category: story.category || null,
-    candidate_ids: story.candidate_ids,
-    source_urls: story.source_urls,
-    content: story.content,
-    status: story.status || "generated",
-    generated_at: story.generated_at || new Date().toISOString(),
-    content_fingerprint: fingerprint(story.headline, story.candidate_ids, story.source_urls),
-    llm_provider: story.llm_provider || null,
-    llm_model: story.llm_model || null,
-  }));
-  const { error } = await db().from("web3pulse_content_history").upsert(rows, { onConflict: "content_fingerprint" });
-  if (error) throw new Error(`Supabase content history save failed: ${error.message}`);
+  for (const story of stories) {
+    const key = fingerprint(story.headline, story.candidate_ids, story.source_urls);
+    if (!uniqueByFingerprint.has(key)) uniqueByFingerprint.set(key, story);
+  }
+
+  // Insert one row at a time with duplicate-conflict ignoring. This is deliberately
+  // sequential: concurrent generation requests can produce the same fingerprint,
+  // and Supabase/Postgres can reject a multi-row upsert when the same conflict key
+  // appears twice in a single statement.
+  for (const story of uniqueByFingerprint.values()) {
+    const row = {
+      headline: story.headline,
+      normalized_headline: normalizeHeadline(story.headline),
+      category: story.category || null,
+      candidate_ids: story.candidate_ids,
+      source_urls: story.source_urls,
+      content: story.content,
+      status: story.status || "generated",
+      generated_at: story.generated_at || new Date().toISOString(),
+      content_fingerprint: fingerprint(story.headline, story.candidate_ids, story.source_urls),
+      llm_provider: story.llm_provider || null,
+      llm_model: story.llm_model || null,
+    };
+    const { error } = await db().from("web3pulse_content_history").upsert([row], { onConflict: "content_fingerprint", ignoreDuplicates: true });
+    if (error) throw new Error(`Supabase content history save failed: ${error.message}`);
+  }
 }
 
 export async function listContentHistory(limit = 100) {
