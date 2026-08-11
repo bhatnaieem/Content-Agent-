@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 import "./light-theme.css";
 import "./ui-polish.css";
+import "./dashboard.css";
 import PublishNav from "./publish-nav";
 
 export const metadata: Metadata = {
