@@ -13,146 +13,28 @@ type FreshCandidate = { id:string; title:string; url:string; source:string; publ
 type Story = { headline:string; category:string; score:number; format:"thread"|"single post"; reason:string; summary:string; keywords:string[]; hashtags:string[]; sources:string[]; source_details?:SourceDetail[]; posting_time_utc:string; cta:string; graphic_prompt:string; alt_text:string; thread:{title:string;tweets:string[]}; engagement:{reply:string;quote_tweet:string;poll:string;blog_expansion:string}; candidate_ids:string[] };
 type GenerateBody = { provider?:string; clientProfile?:ClientProfile };
 
-const CONTENT_PROMPT = `You are Web3 Pulse's senior crypto journalist, social editor and PR strategist.
+const CONTENT_PROMPT=`You are Web3 Pulse's senior crypto journalist and social editor. Turn a verified current event into original, publication-ready X content. Never rewrite the source headline. Lead with a sharp fact, tension, consequence or insight. Be specific and information-dense. Never invent facts, numbers, quotes, dates or motives. Explain what happened and why it matters. Use only supplied candidate facts. Avoid AI clichés, filler, hype and corporate language.
 
-Your job is NOT to rewrite a headline. Turn a verified current candidate into sharp, original, publication-ready X content.
-
-EDITORIAL STANDARD:
-- Lead with the most interesting fact, tension, consequence or insight — never simply repeat the source headline.
-- Write like an experienced Web3 journalist, not an AI assistant.
-- Be specific, concise and information-dense. No filler, generic introductions, corporate language, fake excitement or empty phrases.
-- Never invent facts, numbers, quotes, motives, dates or implications not supported by the supplied candidate.
-- Distinguish clearly between what happened and why it matters.
-- Use the candidate's facts to add useful context and interpretation.
-- Preserve the supplied source URL exactly.
-- Never discuss a different event.
-
-X THREAD STANDARD:
-- Default to a 4-6 post thread for substantive news.
-- Post 1 must be a strong hook that creates curiosity without clickbait and must NOT merely copy the headline.
-- Post 2 explains what actually happened with concrete facts.
-- Post 3 explains why it matters to crypto/Web3 users, markets, builders or the relevant ecosystem.
-- Post 4 adds the most useful implication, context or open question.
-- Post 5 may add nuance, risk, what to watch, or the source; Post 6 only if genuinely useful.
-- Each post must add new information. Never repeat the same sentence or idea.
-- Keep every tweet comfortably within X's 280-character limit.
-- Do not number tweets inside their text.
-- Do not use hashtags in every tweet. Use at most 2-3 relevant hashtags across the whole thread.
-- Avoid phrases such as "Here's what you need to know", "In a major development", "This is huge", "The crypto world", "Only time will tell", and similar AI clichés.
-
-SINGLE-POST STANDARD:
-- Only use format single post when the event is genuinely better communicated in one compact post.
-- It must still contain a hook, the key fact and why it matters.
-
-QUALITY GATE:
-A story without a strong original hook and a 4-6 tweet thread is NOT acceptable. Return fewer stories rather than low-quality filler.
+THREAD STANDARD: exactly 5 posts. Post 1 is an original hook, not the headline. Post 2 gives concrete facts. Post 3 explains why it matters. Post 4 gives useful context, implication or open question. Post 5 says what to watch and includes a concise source/CTA. Every post adds new information, is under 280 characters, and does not contain tweet numbering. Use at most 2-3 hashtags across the entire thread.
 
 Return ONLY valid JSON with a stories array.`;
 
-function clientContext(client?:ClientProfile){
-  if(!client)return "";
-  return ["","CLIENT PROFILE",`Name: ${client.name||""}`,`Description: ${client.description||""}`,`Sector: ${client.sector||""}`,`Chains/ecosystems: ${client.chains||""}`,`Priority topics: ${client.topics||""}`,`Competitors: ${client.competitors||""}`,`Audience: ${client.audience||""}`,`Tone: ${client.tone||""}`,`PR objectives: ${client.objectives||""}`,`Avoid/guardrails: ${client.avoid||""}`].join("\n");
-}
+function clientContext(client?:ClientProfile){if(!client)return "";return `\nCLIENT PROFILE\nName: ${client.name||""}\nDescription: ${client.description||""}\nSector: ${client.sector||""}\nChains: ${client.chains||""}\nTopics: ${client.topics||""}\nAudience: ${client.audience||""}\nTone: ${client.tone||""}\nObjectives: ${client.objectives||""}\nAvoid: ${client.avoid||""}`;}
 function normalizeUrl(url:string){return String(url||"").trim().replace(/\/$/,"");}
-function resolveCandidateIds(story:any,candidates:FreshCandidate[],fallbackIndex?:number):string[]{
-  const byId=new Map(candidates.map(c=>[c.id,c]));
-  const explicit=Array.isArray(story?.candidate_ids)?story.candidate_ids:[story?.candidate_id];
-  const ids=explicit.filter((id:unknown)=>typeof id==="string"&&byId.has(id));
-  if(ids.length)return [ids[0]];
-  const urls=new Set<string>();
-  if(Array.isArray(story?.sources))for(const url of story.sources)if(typeof url==="string")urls.add(normalizeUrl(url));
-  if(Array.isArray(story?.source_details))for(const detail of story.source_details)if(typeof detail?.url==="string")urls.add(normalizeUrl(detail.url));
-  const urlMatch=candidates.find(c=>urls.has(normalizeUrl(c.url)));if(urlMatch)return [urlMatch.id];
-  const headline=String(story?.headline||story?.thread?.title||"");
-  if(headline){const exact=candidates.find(c=>c.title.trim().toLowerCase()===headline.trim().toLowerCase());if(exact)return [exact.id];}
-  if(typeof fallbackIndex==="number"&&candidates[fallbackIndex])return [candidates[fallbackIndex].id];
-  return [];
-}
-function normalizeStory(story:any,candidates:FreshCandidate[],fallbackIndex?:number):Story|null{
-  const ids=resolveCandidateIds(story,candidates,fallbackIndex);if(ids.length!==1)return null;
-  const first=candidates.find(c=>c.id===ids[0]);if(!first)return null;
-  const threadSource=story?.thread&&typeof story.thread==="object"?story.thread:{};
-  const engagement=story?.engagement&&typeof story.engagement==="object"?story.engagement:{};
-  const tweets=Array.isArray(threadSource.tweets)?threadSource.tweets.filter((x:unknown)=>typeof x==="string"&&x.trim()).map((x:string)=>x.trim()):[];
-  return {headline:String(story?.headline||first.title),category:String(story?.category||first.category||"Emerging"),score:Number.isFinite(Number(story?.score))?Number(story.score):first.score,format:story?.format==="single post"?"single post":"thread",reason:String(story?.reason||first.opportunity||"Current verified Web3 development."),summary:String(story?.summary||first.summary||""),keywords:Array.isArray(story?.keywords)?story.keywords.filter((x:unknown)=>typeof x==="string"):first.keywords||[],hashtags:Array.isArray(story?.hashtags)?story.hashtags.filter((x:unknown)=>typeof x==="string"):[],sources:[first.url],source_details:[{name:first.source,url:first.url,published_at:first.publishedAt}],posting_time_utc:String(story?.posting_time_utc||first.publishedAt),cta:String(story?.cta||"Read the source and verify the details before publishing."),graphic_prompt:String(story?.graphic_prompt||`Create a premium editorial Web3 visual for: ${story?.headline||first.title}.`),alt_text:String(story?.alt_text||`Editorial visual representing ${story?.headline||first.title}.`),thread:{title:String(threadSource.title||story?.headline||first.title),tweets},engagement:{reply:String(engagement.reply||""),quote_tweet:String(engagement.quote_tweet||""),poll:String(engagement.poll||""),blog_expansion:String(engagement.blog_expansion||"")},candidate_ids:ids};
-}
-function isQualityStory(story:Story|null){
-  if(!story||story.format!=="thread")return false;
-  const tweets=story.thread?.tweets||[];
-  if(tweets.length<4||tweets.length>6)return false;
-  if(tweets.some(t=>t.length<35||t.length>280))return false;
-  const normalized=tweets.map(t=>t.toLowerCase().replace(/[^a-z0-9 ]/g," ").replace(/\s+/g," ").trim());
-  if(new Set(normalized).size!==normalized.length)return false;
-  if(/^(here's what you need to know|in a major development|this is huge|the crypto world)/i.test(tweets[0]))return false;
-  return true;
-}
-function parseLLMJson(content:string):any{
-  const cleaned=content.replace(/^\s*```(?:json)?\s*/i,"").replace(/\s*```\s*$/i,"").trim();
-  try{return JSON.parse(cleaned);}catch{}
-  const start=cleaned.indexOf("{");if(start<0)throw new Error("LLM returned no JSON object.");let depth=0,inString=false,escaped=false;
-  for(let i=start;i<cleaned.length;i++){const ch=cleaned[i];if(inString){if(escaped)escaped=false;else if(ch==="\\")escaped=true;else if(ch==='"')inString=false;continue;}if(ch==='"'){inString=true;continue;}if(ch==="{")depth++;else if(ch==="}"&&--depth===0){try{return JSON.parse(cleaned.slice(start,i+1));}catch{break;}}}
-  throw new Error("LLM returned invalid JSON.");
-}
+function resolveCandidateIds(story:any,candidates:FreshCandidate[],fallbackIndex?:number){const byId=new Map(candidates.map(c=>[c.id,c]));const explicit=Array.isArray(story?.candidate_ids)?story.candidate_ids:[story?.candidate_id];const ids=explicit.filter((id:unknown)=>typeof id==="string"&&byId.has(id));if(ids.length)return [ids[0]];const urls=new Set<string>();for(const x of Array.isArray(story?.sources)?story.sources:[])if(typeof x==="string")urls.add(normalizeUrl(x));for(const x of Array.isArray(story?.source_details)?story.source_details:[])if(typeof x?.url==="string")urls.add(normalizeUrl(x.url));const byUrl=candidates.find(c=>urls.has(normalizeUrl(c.url)));if(byUrl)return [byUrl.id];const headline=String(story?.headline||story?.thread?.title||"").trim().toLowerCase();const byTitle=candidates.find(c=>c.title.trim().toLowerCase()===headline);if(byTitle)return [byTitle.id];return typeof fallbackIndex==="number"&&candidates[fallbackIndex]?[candidates[fallbackIndex].id]:[];}
+function normalizeStory(story:any,candidates:FreshCandidate[],fallbackIndex?:number):Story|null{const ids=resolveCandidateIds(story,candidates,fallbackIndex);if(ids.length!==1)return null;const first=candidates.find(c=>c.id===ids[0]);if(!first)return null;const rawTweets=Array.isArray(story?.thread?.tweets)?story.thread.tweets:[];const tweets=rawTweets.filter((x:unknown)=>typeof x==="string"&&x.trim()).map((x:string)=>x.trim());return {headline:String(story?.headline||first.title),category:String(story?.category||first.category||"Emerging"),score:Number.isFinite(Number(story?.score))?Number(story.score):first.score,format:"thread",reason:String(story?.reason||first.opportunity||"Current verified Web3 development."),summary:String(story?.summary||first.summary||""),keywords:Array.isArray(story?.keywords)?story.keywords.filter((x:unknown)=>typeof x==="string"):first.keywords||[],hashtags:Array.isArray(story?.hashtags)?story.hashtags.filter((x:unknown)=>typeof x==="string"):[],sources:[first.url],source_details:[{name:first.source,url:first.url,published_at:first.publishedAt}],posting_time_utc:String(story?.posting_time_utc||first.publishedAt),cta:String(story?.cta||"Read the source and verify the details before publishing."),graphic_prompt:String(story?.graphic_prompt||`Create a premium editorial Web3 visual for: ${story?.headline||first.title}.`),alt_text:String(story?.alt_text||`Editorial visual representing ${story?.headline||first.title}.`),thread:{title:String(story?.thread?.title||story?.headline||first.title),tweets},engagement:{reply:String(story?.engagement?.reply||""),quote_tweet:String(story?.engagement?.quote_tweet||""),poll:String(story?.engagement?.poll||""),blog_expansion:String(story?.engagement?.blog_expansion||"")},candidate_ids:ids};}
+function isQualityStory(story:Story|null){if(!story)return false;const t=story.thread?.tweets||[];if(t.length<4||t.length>6)return false;if(t.some(x=>x.length<30||x.length>280))return false;const n=t.map(x=>x.toLowerCase().replace(/[^a-z0-9 ]/g," ").replace(/\s+/g," ").trim());if(new Set(n).size!==n.length)return false;if(/^(here's what you need to know|in a major development|this is huge|the crypto world)/i.test(t[0]))return false;return true;}
+function parseLLMJson(content:string){const cleaned=content.replace(/^\s*```(?:json)?\s*/i,"").replace(/\s*```\s*$/i,"").trim();try{return JSON.parse(cleaned);}catch{}const start=cleaned.indexOf("{");if(start<0)throw new Error("LLM returned no JSON object");let depth=0,inString=false,escaped=false;for(let i=start;i<cleaned.length;i++){const ch=cleaned[i];if(inString){if(escaped)escaped=false;else if(ch==="\\")escaped=true;else if(ch==='"')inString=false;continue;}if(ch==='"'){inString=true;continue;}if(ch==="{")depth++;else if(ch==="}"&&--depth===0){try{return JSON.parse(cleaned.slice(start,i+1));}catch{break;}}}throw new Error("LLM returned invalid JSON");}
 
-async function generateOne(candidate:FreshCandidate,provider:Provider,client?:ClientProfile):Promise<Story|null>{
-  const prompt=`Generate EXACTLY ONE high-quality publication-ready X thread from ONLY this verified candidate.
+async function generateOne(candidate:FreshCandidate,provider:Provider,client?:ClientProfile):Promise<Story|null>{const prompt=`Generate EXACTLY ONE publication-ready X thread using ONLY this verified candidate. Return ONLY JSON with stories containing exactly one story.\nMANDATORY: format=thread; exactly 5 tweets; each under 280 characters; tweet 1 original hook; tweet 2 concrete facts; tweet 3 why it matters; tweet 4 context/implication; tweet 5 what to watch plus concise source/CTA; every tweet adds new information; candidate_ids must be exactly ["${candidate.id}"]; no invented facts.\nVERIFIED CANDIDATE:\n${JSON.stringify(candidate,null,2)}${clientContext(client)}`;const result=await generateWithLLM({provider,system:CONTENT_PROMPT,user:prompt,responseFormat:"json_object",temperature:0.55,maxTokens:2200});const data=parseLLMJson(result.content);const raw=Array.isArray(data.stories)?data.stories:[];const story=raw.length?normalizeStory(raw[0],[candidate],0):null;return isQualityStory(story)?story:null;}
 
-MANDATORY OUTPUT:
-- format must be "thread"
-- exactly 5 tweets
-- every tweet must be 280 characters or fewer
-- tweet 1 = original hook, not the source headline
-- tweet 2 = concrete facts
-- tweet 3 = why it matters
-- tweet 4 = implication/context/open question
-- tweet 5 = what to watch next + concise source/CTA
-- every tweet must add new information
-- candidate_ids must contain exactly: ${candidate.id}
-- do not invent anything
-
-Return ONLY JSON with a stories array containing exactly one story.
-
-VERIFIED CANDIDATE:
-${JSON.stringify(candidate,null,2)}${clientContext(client)}`;
-  const result=await generateWithLLM({provider,system:CONTENT_PROMPT,user:prompt,responseFormat:"json_object",temperature:0.55,maxTokens:2200});
-  const data=parseLLMJson(result.content);const raw=Array.isArray(data.stories)?data.stories:[];const story=raw.length?normalizeStory(raw[0],[candidate],0):null;return isQualityStory(story)?story:null;
-}
-
-export async function POST(request:Request){
-  const started=Date.now();
-  try{
-    let body:GenerateBody={};try{body=await request.json();}catch{}
-    const provider:Provider=["auto","gemini","nemotron","openrouter"].includes(body.provider||"")?(body.provider as Provider):"auto";
-    const now=new Date();const currentDate=now.toISOString().slice(0,10);const cutoffUtc=new Date(now.getTime()-48*60*60*1000).toISOString();
-    try{
-      const packet=await runMultiAgentResearch([]);
-      let candidates:FreshCandidate[]=packet.candidates.filter(item=>{const t=Date.parse(item.publishedAt);return Number.isFinite(t)&&t>=Date.parse(cutoffUtc)&&t<=now.getTime()+15*60*1000}).map(item=>({id:item.id,title:item.title,url:item.url,source:item.source,publishedAt:item.publishedAt,summary:item.summary,category:item.category,keywords:item.keywords,score:item.scores.overall,opportunity:item.opportunity}));
-      const rawCandidateCount=candidates.length;await rememberCandidates(candidates);candidates=await filterPreviouslyCovered(candidates);let memoryFilteredCount=candidates.length;
-      if(memoryFilteredCount===0){const retryPacket=await runMultiAgentResearch([]);const retryCandidates:FreshCandidate[]=retryPacket.candidates.filter(item=>{const t=Date.parse(item.publishedAt);return Number.isFinite(t)&&t>=Date.parse(cutoffUtc)&&t<=now.getTime()+15*60*1000}).map(item=>({id:item.id,title:item.title,url:item.url,source:item.source,publishedAt:item.publishedAt,summary:item.summary,category:item.category,keywords:item.keywords,score:item.scores.overall,opportunity:item.opportunity}));const retryFiltered=await filterPreviouslyCovered(retryCandidates);if(retryFiltered.length){candidates=retryFiltered;memoryFilteredCount=retryFiltered.length;}}
-      const diverse:FreshCandidate[]=Array.from(new Map(candidates.sort((a,b)=>b.score-a.score).map(c=>[c.id,c])).values()).slice(0,40);
-      console.info("Web3 Pulse briefing gate",{rawCandidateCount,memoryFilteredCount,diverseCount:diverse.length,historyGuard:"exact-url-or-headline",elapsed_ms:Date.now()-started});
-      if(!diverse.length)return NextResponse.json({date:currentDate,generated_at_utc:now.toISOString(),stories:[],no_new_stories:true,code:"NO_NEW_STORIES",error:"No genuinely new verified stories were found. Nothing old was reused.",diagnostics:{raw_candidates:rawCandidateCount,after_memory_filter:memoryFilteredCount},cutoff_utc:cutoffUtc,memory:"supabase"},{status:200});
-
-      const targetCount=Math.min(5,diverse.length);
-      const selected=diverse.slice(0,targetCount);
-      // Generate each story independently so every thread receives enough output budget for quality.
-      const results=await Promise.allSettled(selected.map(candidate=>generateOne(candidate,provider,body.clientProfile)));
-      let stories:Story[]=results.filter((r):r is PromiseFulfilledResult<Story|null>=>r.status==="fulfilled").map(r=>r.value).filter((s):s is Story=>isQualityStory(s));
-      stories=await filterGeneratedDuplicates(stories);
-
-      // Retry only failed quality candidates once. Weak/incomplete content is never returned to the user.
-      if(stories.length<targetCount){
-        const used=new Set(stories.flatMap(s=>s.candidate_ids));
-        const retryCandidates=selected.filter(c=>!used.has(c.id));
-        const retryResults=await Promise.allSettled(retryCandidates.map(c=>generateOne(c,provider,body.clientProfile)));
-        const retries=retryResults.filter((r):r is PromiseFulfilledResult<Story|null>=>r.status==="fulfilled").map(r=>r.value).filter((s):s is Story=>isQualityStory(s));
-        stories=await filterGeneratedDuplicates([...stories,...retries]);
-      }
-
-      if(!stories.length)return NextResponse.json({date:currentDate,generated_at_utc:now.toISOString(),stories:[],no_new_stories:true,code:"QUALITY_GATE_BLOCKED",error:"Fresh candidates were found, but the content model did not produce publication-quality threads. No weak content was returned.",diagnostics:{raw_candidates:rawCandidateCount,after_memory_filter:memoryFilteredCount,selected_candidates:targetCount},candidate_count:diverse.length,memory:"supabase"},{status:200});
-      stories=stories.slice(0,targetCount);
-      try{await saveGeneratedStories(stories.map(story=>({headline:story.headline,category:story.category,candidate_ids:story.candidate_ids,source_urls:story.sources,content:story,status:"generated",generated_at:now.toISOString(),llm_provider:provider,llm_model:"auto"})))}catch(error){return NextResponse.json({error:"Persistent content memory could not be written. Nothing was returned to prevent duplicates.",code:"MEMORY_WRITE_FAILED",detail:error instanceof Error?error.message:"Supabase write failed"},{status:503});}
-      return NextResponse.json({date:currentDate,generated_at_utc:now.toISOString(),stories,research_window:{cutoff_utc:cutoffUtc,hours:48,candidate_count:diverse.length},llm_provider:provider,llm_calls:targetCount,elapsed_ms:Date.now()-started,memory:"supabase"});
-    }catch(error){console.error("Duplicate memory/research gate failed:",error);return NextResponse.json({error:"Persistent duplicate protection is unavailable. Generation was blocked so an old story cannot be shown again.",code:"MEMORY_REQUIRED",detail:error instanceof Error?error.message:"Memory unavailable",elapsed_ms:Date.now()-started},{status:503});}
-  }catch(error:any){console.error("Web3 Pulse Generation Error:",error);return NextResponse.json({error:error?.message||"Failed to generate current Web3 Pulse intelligence.",code:"GENERATION_ERROR",elapsed_ms:Date.now()-started},{status:500});}
-}
+export async function POST(request:Request){const started=Date.now();try{let body:GenerateBody={};try{body=await request.json();}catch{}const provider:Provider=["auto","gemini","nemotron","openrouter"].includes(body.provider||"")?(body.provider as Provider):"auto";const now=new Date();const currentDate=now.toISOString().slice(0,10);const cutoff=new Date(now.getTime()-48*60*60*1000).toISOString();
+let packet;try{packet=await runMultiAgentResearch([]);}catch(error){console.error("Research failed",error);return NextResponse.json({error:"Research failed before content generation.",code:"RESEARCH_FAILED",stage:"research",detail:error instanceof Error?error.message:"Unknown research error",elapsed_ms:Date.now()-started},{status:502});}
+let candidates:FreshCandidate[]=packet.candidates.filter(item=>{const t=Date.parse(item.publishedAt);return Number.isFinite(t)&&t>=Date.parse(cutoff)&&t<=now.getTime()+15*60*1000}).map(item=>({id:item.id,title:item.title,url:item.url,source:item.source,publishedAt:item.publishedAt,summary:item.summary,category:item.category,keywords:item.keywords,score:item.scores.overall,opportunity:item.opportunity}));const rawCandidateCount=candidates.length;
+try{await rememberCandidates(candidates);candidates=await filterPreviouslyCovered(candidates);}catch(error){console.error("Memory gate failed",error);return NextResponse.json({error:"Duplicate protection is unavailable. No content was returned because it is unsafe to bypass the no-repeat guard.",code:"MEMORY_REQUIRED",stage:"memory",detail:error instanceof Error?error.message:"Unknown memory error",diagnostics:{raw_candidates:rawCandidateCount},elapsed_ms:Date.now()-started},{status:503});}
+const diverse:FreshCandidate[]=Array.from(new Map(candidates.sort((a,b)=>b.score-a.score).map(c=>[c.id,c])).values()).slice(0,5);console.info("Web3 Pulse generation",{raw_candidates:rawCandidateCount,after_memory_filter:candidates.length,selected:diverse.length,elapsed_ms:Date.now()-started});if(!diverse.length)return NextResponse.json({date:currentDate,generated_at_utc:now.toISOString(),stories:[],code:"NO_NEW_STORIES",stage:"selection",error:"Research completed, but no genuinely new stories survived duplicate protection.",diagnostics:{raw_candidates:rawCandidateCount,after_memory_filter:candidates.length},memory:"supabase"},{status:200});
+const results=await Promise.allSettled(diverse.map(c=>generateOne(c,provider,body.clientProfile)));let stories=results.flatMap((r,i)=>r.status==="fulfilled"&&r.value?[r.value]:[]);let generationFailures=results.map((r,i)=>r.status==="rejected"?{candidate_id:diverse[i].id,error:r.reason instanceof Error?r.reason.message:String(r.reason)}:r.status==="fulfilled"&&!r.value?{candidate_id:diverse[i].id,error:"Quality gate rejected the generated thread"}:null).filter(Boolean);try{stories=await filterGeneratedDuplicates(stories);}catch(error){console.error("Generated duplicate filter failed",error);return NextResponse.json({error:"Generated content could not be safely checked for duplicates.",code:"GENERATION_MEMORY_FAILED",stage:"memory",detail:error instanceof Error?error.message:"Unknown duplicate-check error",elapsed_ms:Date.now()-started},{status:503});}
+if(!stories.length)return NextResponse.json({date:currentDate,generated_at_utc:now.toISOString(),stories:[],code:"GENERATION_QUALITY_FAILED",stage:"generation",error:"Research succeeded, but the content model did not return a publication-quality thread. No weak content was shown.",diagnostics:{raw_candidates:rawCandidateCount,after_memory_filter:candidates.length,selected_candidates:diverse.length,generation_failures:generationFailures},elapsed_ms:Date.now()-started,memory:"supabase"},{status:200});
+stories=stories.slice(0,5);try{await saveGeneratedStories(stories.map(story=>({headline:story.headline,category:story.category,candidate_ids:story.candidate_ids,source_urls:story.sources,content:story,status:"generated",generated_at:now.toISOString(),llm_provider:provider,llm_model:"auto"})));}catch(error){console.error("History save failed",error);return NextResponse.json({error:"Stories were generated but could not be saved to persistent history.",code:"MEMORY_WRITE_FAILED",stage:"save",detail:error instanceof Error?error.message:"Unknown save error",stories,elapsed_ms:Date.now()-started},{status:503});}
+return NextResponse.json({date:currentDate,generated_at_utc:now.toISOString(),stories,research_window:{cutoff_utc:cutoff,hours:48,candidate_count:candidates.length},llm_provider:provider,llm_calls:diverse.length,partial:stories.length<diverse.length,generation_failures:generationFailures,elapsed_ms:Date.now()-started,memory:"supabase"});
+}catch(error){console.error("Web3 Pulse generation error",error);return NextResponse.json({error:error instanceof Error?error.message:"Failed to generate Web3 Pulse briefing.",code:"GENERATION_ERROR",stage:"generation",elapsed_ms:Date.now()-started},{status:500});}}
