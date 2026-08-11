@@ -2,7 +2,7 @@ import OpenAI from "openai";
 
 type Provider = "auto" | "gemini" | "nemotron" | "openrouter";
 type GenerateOptions = { system:string; user:string; responseFormat?:"json_object"; temperature?:number; provider?:Provider };
-const LLM_TIMEOUT_MS=10000;
+const LLM_TIMEOUT_MS=7000;
 
 function clientFor(provider:Exclude<Provider,"auto">){
   if(provider==="gemini"){
@@ -39,11 +39,15 @@ export async function generateWithLLM(options:GenerateOptions){
     try{
       const client=clientFor(provider);
       const request={model,messages:[{role:"system",content:options.system},{role:"user",content:options.user}],...(options.responseFormat?{response_format:{type:options.responseFormat}}:{}),temperature:options.temperature??0.2};
-      const response=await client.chat.completions.create(request as any);
-      const content=response.choices[0]?.message?.content;
-      if(!content) throw new Error(`${provider}/${model} returned an empty response.`);
-      if(options.responseFormat&&!isValidJsonObject(content)) throw new Error(`${provider}/${model} returned malformed JSON. No retry was attempted to protect the Vercel execution budget.`);
-      return {content:cleanJson(content),provider,model};
+      const controller=new AbortController();
+      const timer=setTimeout(()=>controller.abort(),LLM_TIMEOUT_MS);
+      try{
+        const response=await client.chat.completions.create(request as any,{signal:controller.signal} as any);
+        const content=response.choices[0]?.message?.content;
+        if(!content) throw new Error(`${provider}/${model} returned an empty response.`);
+        if(options.responseFormat&&!isValidJsonObject(content)) throw new Error(`${provider}/${model} returned malformed JSON. No retry was attempted.`);
+        return {content:cleanJson(content),provider,model};
+      } finally { clearTimeout(timer); }
     }catch(error){
       lastError=error;
       console.error(`Web3 Pulse ${provider}/${model} error:`,error);
