@@ -24,7 +24,8 @@ function modelFor(provider:Exclude<Provider,"auto">){
   if(provider==="nemotron") return process.env.NEMOTRON_MODEL||"nvidia/nemotron-3-ultra-253b-v1";
   return process.env.OPENROUTER_MODEL||"openai/gpt-oss-20b:free";
 }
-function isRateLimited(error:unknown){const e=error as {status?:number;code?:string;message?:string}|undefined;return e?.status===429||e?.code==="429"||/rate.?limit|quota|too many requests/i.test(e?.message||"");}
+function isRateLimited(error:unknown){const e=error as {status?:number;code?:string;message?:string}|undefined;return e?.status===429||e?.code==="429"||/rate.?limit|quota|too many requests|resource.?exhausted/i.test(e?.message||"");}
+function isValidJsonObject(value:string){try{const parsed=JSON.parse(value.replace(/^\s*```(?:json)?\s*/i,"").replace(/\s*```\s*$/i,"").trim());return Boolean(parsed&&typeof parsed==="object"&&!Array.isArray(parsed));}catch{return false;}}
 
 export async function generateWithLLM(options:GenerateOptions){
   const requested=options.provider||"auto";
@@ -36,14 +37,23 @@ export async function generateWithLLM(options:GenerateOptions){
   if(!configured.length) throw new Error("No LLM provider is configured. Add OPENROUTER_API_KEY, GEMINI_API_KEY or NEMOTRON_API_KEY.");
   let lastError:unknown;
   for(const provider of configured){
+    const model=modelFor(provider);
     try{
-      const response=await clientFor(provider).chat.completions.create({model:modelFor(provider),messages:[{role:"system",content:options.system},{role:"user",content:options.user}],...(options.responseFormat?{response_format:{type:options.responseFormat}}:{}),temperature:options.temperature??0.2});
-      const content=response.choices[0]?.message?.content;
-      if(!content) throw new Error(`${provider} returned an empty response.`);
-      return {content,provider,model:modelFor(provider)};
+      const client=clientFor(provider);
+      const request={model,messages:[{role:"system",content:options.system},{role:"user",content:options.user}],...(options.responseFormat?{response_format:{type:options.responseFormat}}:{}),temperature:options.temperature??0.2};
+      let response=await client.chat.completions.create(request as any);
+      let content=response.choices[0]?.message?.content;
+      if(!content) throw new Error(`${provider}/${model} returned an empty response.`);
+      if(options.responseFormat&&!isValidJsonObject(content)){
+        // Some free OpenRouter models ignore response_format. Retry once with a stronger plain-text JSON contract.
+        response=await client.chat.completions.create({model,messages:[{role:"system",content:`${options.system}\n\nCRITICAL OUTPUT CONTRACT: Return ONLY one valid JSON object. No Markdown, no code fences, no explanation, no preamble.`},{role:"user",content:options.user}],temperature:options.temperature??0.2} as any);
+        content=response.choices[0]?.message?.content;
+        if(!content||!isValidJsonObject(content)) throw new Error(`${provider}/${model} returned malformed JSON after structured-output retry.`);
+      }
+      return {content,provider,model};
     }catch(error){
       lastError=error;
-      console.error(`Web3 Pulse ${provider} error:`,error);
+      console.error(`Web3 Pulse ${provider}/${model} error:`,error);
       if(requested!=="auto") break;
     }
   }
