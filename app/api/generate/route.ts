@@ -12,37 +12,27 @@ type Story = { headline:string; category:string; score:number; format:"thread"|"
 type FreshCandidate = { id:string; title:string; url:string; source:string; publishedAt:string; summary:string; category:string; keywords:string[]; score:number; opportunity:string };
 type GenerateBody = { provider?:string; clientProfile?:ClientProfile; excludeCandidateIds?:string[] };
 
-const CONTENT_PROMPT = `You are the Web3 Pulse Content Director Agent. Work ONLY from the supplied VERIFIED CURRENT candidates. Do not use model memory to add current events, old facts, invented claims, sources, URLs or dates. PRIORITY ORDER: 1. Exploits & Hacks 2. Airdrops 3. Airdrop Guides 4. Other high-interest Web3 only when no stronger priority candidate exists. Select the strongest 1-2 opportunities from the supplied candidates. Candidates excluded by the research system must never be recreated. For every story, candidate_ids SHOULD contain the exact supplied candidate id when possible. Preserve exact supplied source URLs. Every story must be traceable to at least one supplied candidate. Generate master thread, single X post, reply, quote tweet, poll with exactly 4 choices, blog expansion, creative/image prompt and alt text. Make every format genuinely different. Never invent airdrop eligibility, tasks, claim links, rewards or deadlines. Never invent security-incident users, losses, attacker identity or remediation. Return ONLY valid JSON.`;
+const CONTENT_PROMPT = `You are the Web3 Pulse Content Director Agent. Work ONLY from the supplied VERIFIED CURRENT candidates. Do not use model memory to add current events, old facts, invented claims, sources, URLs or dates. PRIORITY ORDER: 1. Exploits & Hacks 2. Airdrops 3. Airdrop Guides 4. Other high-interest Web3. Select the BEST FIVE distinct opportunities from the supplied candidates when five are available; otherwise select all genuinely eligible candidates. Do not repeat the same event, protocol, headline or angle across stories. Candidates excluded by the research system must never be recreated. For every story, candidate_ids SHOULD contain the exact supplied candidate id when possible. Preserve exact supplied source URLs. Every story must be traceable to at least one supplied candidate. Generate master thread, single X post, reply, quote tweet, poll with exactly 4 choices, blog expansion, creative/image prompt and alt text. Make every format genuinely different. Never invent airdrop eligibility, tasks, claim links, rewards or deadlines. Never invent security-incident users, losses, attacker identity or remediation. Return ONLY valid JSON.`;
 
 function clientContext(client?:ClientProfile){if(!client)return "";return ["","CLIENT PROFILE",`Name: ${client.name||""}`,`Description: ${client.description||""}`,`Sector: ${client.sector||""}`,`Chains/ecosystems: ${client.chains||""}`,`Priority topics: ${client.topics||""}`,`Competitors: ${client.competitors||""}`,`Audience: ${client.audience||""}`,`Tone: ${client.tone||""}`,`PR objectives: ${client.objectives||""}`,`Avoid/guardrails: ${client.avoid||""}`].join("\n");}
 function normalizeUrl(url:string){return String(url||"").trim().replace(/\/$/,"");}
 function parseExcludedCookie(request:Request):string[]{const raw=request.headers.get("cookie")||"";const match=raw.match(/(?:^|;\s*)web3pulse_excluded=([^;]+)/);if(!match)return [];try{const parsed=JSON.parse(decodeURIComponent(match[1]));return Array.isArray(parsed)?parsed.filter(id=>typeof id==="string").slice(-500):[];}catch{return [];}}
 
-// Grounding is deterministic: the backend owns the candidate relationship.
-// The LLM may return IDs, URLs, or a matching headline, but missing/invalid IDs
-// are resolved against the exact candidate pool supplied to that LLM call.
 function resolveCandidateIds(story:any,candidates:FreshCandidate[],fallbackIndex?:number):string[]{
   const byId=new Map(candidates.map(c=>[c.id,c]));
   const explicit=Array.isArray(story?.candidate_ids)?story.candidate_ids:[story?.candidate_id];
   const ids=explicit.filter((id:unknown)=>typeof id==="string"&&byId.has(id));
   if(ids.length)return Array.from(new Set(ids));
-
   const urls=new Set<string>();
   if(Array.isArray(story?.sources))for(const url of story.sources)if(typeof url==="string")urls.add(normalizeUrl(url));
   if(Array.isArray(story?.source_details))for(const detail of story.source_details)if(typeof detail?.url==="string")urls.add(normalizeUrl(detail.url));
   const urlMatches=candidates.filter(c=>urls.has(normalizeUrl(c.url))).map(c=>c.id);
   if(urlMatches.length)return Array.from(new Set(urlMatches));
-
   const headline=String(story?.headline||story?.thread?.title||"").toLowerCase().trim();
   if(headline){
     const matches=candidates.filter(c=>{const title=c.title.toLowerCase().trim();return title===headline||title.includes(headline)||headline.includes(title);}).map(c=>c.id);
     if(matches.length)return Array.from(new Set(matches));
   }
-
-  // Last-resort deterministic grounding: the Nth returned story is tied to the
-  // Nth selected candidate. This never introduces a candidate outside the
-  // verified pool and prevents valid content from being discarded just because
-  // a provider omitted the internal ID field.
   if(typeof fallbackIndex==="number"&&candidates[fallbackIndex])return [candidates[fallbackIndex].id];
   return [];
 }
@@ -87,14 +77,14 @@ export async function POST(request:Request){
     let databaseUsedIds:string[]=[];
     try{databaseUsedIds=await getUsedCandidateIds();}catch(error){console.warn("Supabase memory unavailable; using cookie/request exclusions only.",error);}
     const excludedIds=Array.from(new Set([...cookieExcluded,...requestedExcluded,...databaseUsedIds])).slice(-500);
-    const now=new Date();const currentDate=now.toISOString().slice(0,10);const cutoffUtc=new Date(now.getTime()-48*60*60*1000).toISOString();
+    const now=new Date();const currentDate=now.toISOString().slice(0,10);const cutoffUtc=new Date(now.getTime()-72*60*60*1000).toISOString();
     const packet=await runMultiAgentResearch(excludedIds);
     let freshCandidates:FreshCandidate[]=packet.candidates.filter(item=>{const t=Date.parse(item.publishedAt);return Number.isFinite(t)&&t>=Date.parse(cutoffUtc)&&t<=now.getTime();}).map(item=>({id:item.id,title:item.title,url:item.url,source:item.source,publishedAt:item.publishedAt,summary:item.summary,category:item.category,keywords:item.keywords,score:item.scores.overall,opportunity:item.opportunity}));
     try{await rememberCandidates(freshCandidates);freshCandidates=await filterPreviouslyCovered(freshCandidates);}catch(error){console.warn("Supabase duplicate memory unavailable during candidate filtering.",error);}
-    if(!freshCandidates.length)return NextResponse.json({error:"No new verified stories are available in the current research window. Web3 Pulse will not repeat a previously generated story.",code:"NO_NEW_STORIES",date:currentDate,cutoff_utc:cutoffUtc,excluded_count:excludedIds.length,agents:packet.agents,verification:packet.verification},{status:503});
+    if(!freshCandidates.length)return NextResponse.json({error:"No new verified stories are available in the current 72-hour research window. Web3 Pulse will not repeat a previously generated story.",code:"NO_NEW_STORIES",date:currentDate,cutoff_utc:cutoffUtc,excluded_count:excludedIds.length,agents:packet.agents,verification:packet.verification},{status:503});
     const context=[`CURRENT_DATE: ${currentDate}`,`CURRENT_TIME_UTC: ${now.toISOString()}`,`CUTOFF_UTC: ${cutoffUtc}`,"Only the supplied candidates may be used as factual sources.",`MULTI_AGENT_REPORTS: ${JSON.stringify(packet.agents)}`,`VERIFICATION: ${JSON.stringify(packet.verification)}`,`PRIORITY_FOCUS: ${packet.priority_focus.join(", ")}`,`NARRATIVES: ${JSON.stringify(packet.narratives.slice(0,8))}`].join("\n");
     const candidateContext=`VERIFIED CURRENT CANDIDATES (${freshCandidates.length}):\n${JSON.stringify(freshCandidates,null,2)}`;
-    const generation=await generateWithLLM({provider,system:CONTENT_PROMPT,user:`${context}\n\n${candidateContext}\n\nGenerate the COMPLETE CONTENT PACKAGE. Output one JSON object with a stories array.`+clientContext(body.clientProfile),responseFormat:"json_object",temperature:0.1});
+    const generation=await generateWithLLM({provider,system:CONTENT_PROMPT,user:`${context}\n\n${candidateContext}\n\nGenerate the COMPLETE CONTENT PACKAGE. Output one JSON object with a stories array containing the best five distinct stories when five candidates are supplied.`+clientContext(body.clientProfile),responseFormat:"json_object",temperature:0.1});
     let data:any;try{data=parseLLMJson(generation.content);}catch{return NextResponse.json({error:"The selected LLM returned malformed structured output.",code:"INVALID_LLM_JSON",provider:generation.provider,model:generation.model,date:currentDate},{status:502});}
     const rawStories=Array.isArray(data.stories)?data.stories:[];
     const stories=rawStories.map((s:any,index:number)=>normalizeStory(s,freshCandidates,index)).filter((s:Story|null):s is Story=>s!==null);
@@ -103,7 +93,7 @@ export async function POST(request:Request){
     try{
       await saveGeneratedStories(freshStories.map(story=>({headline:story.headline,category:story.category,candidate_ids:story.candidate_ids,source_urls:story.sources,content:story,status:"generated",generated_at:now.toISOString(),llm_provider:generation.provider,llm_model:generation.model})));
     }catch(error){console.error("Supabase content memory write failed:",error);return NextResponse.json({error:"Content was generated but Web3 Pulse could not save it to persistent memory. Nothing was returned to prevent duplicate generation.",code:"MEMORY_WRITE_FAILED",detail:error instanceof Error?error.message:"Supabase write failed"},{status:503});}
-    const response=NextResponse.json({...data,date:currentDate,generated_at_utc:now.toISOString(),stories:freshStories,research_window:{cutoff_utc:cutoffUtc,hours:48,candidate_count:freshCandidates.length,excluded_candidate_count:excludedIds.length},research_sources:packet.narratives,agents:packet.agents,verification:packet.verification,llm_provider:generation.provider,llm_model:generation.model,client_mode:Boolean(body.clientProfile),client_name:body.clientProfile?.name||null,priority_focus:packet.priority_focus,llm_calls:1,elapsed_ms:Date.now()-started,memory:"supabase"});
+    const response=NextResponse.json({...data,date:currentDate,generated_at_utc:now.toISOString(),stories:freshStories,research_window:{cutoff_utc:cutoffUtc,hours:72,candidate_count:freshCandidates.length,excluded_candidate_count:excludedIds.length},research_sources:packet.narratives,agents:packet.agents,verification:packet.verification,llm_provider:generation.provider,llm_model:generation.model,client_mode:Boolean(body.clientProfile),client_name:body.clientProfile?.name||null,priority_focus:packet.priority_focus,llm_calls:1,elapsed_ms:Date.now()-started,memory:"supabase"});
     const newlyUsed=freshStories.flatMap((s:Story)=>s.candidate_ids);response.cookies.set("web3pulse_excluded",encodeURIComponent(JSON.stringify(Array.from(new Set([...excludedIds,...newlyUsed])).slice(-500))),{httpOnly:true,sameSite:"lax",secure:true,path:"/",maxAge:60*60*24*30});
     return response;
   }catch(error:any){console.error("Web3 Pulse Generation Error:",error);return NextResponse.json({error:error?.message||"Failed to generate current Web3 Pulse intelligence.",code:"GENERATION_ERROR",elapsed_ms:Date.now()-started},{status:500});}
