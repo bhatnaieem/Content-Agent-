@@ -1,0 +1,12 @@
+"use client";
+import {useState} from "react";
+import {ArrowRight,Check,Copy,Link2,Loader2,Sparkles,X} from "lucide-react";
+
+type Story={headline:string;summary?:string;thread?:{tweets?:string[]};sources?:string[];source_details?:Array<{name:string;url:string}>};
+export default function UrlGenerator(){
+ const [url,setUrl]=useState(""); const [loading,setLoading]=useState(false); const [error,setError]=useState(""); const [story,setStory]=useState<Story|null>(null); const [copied,setCopied]=useState(false);
+ async function generate(){setError("");setStory(null);if(!url.trim())return setError("Paste an article URL first.");setLoading(true);try{const r=await fetch("/api/generate-from-url",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url})});const d=await r.json();if(!r.ok)throw new Error(d.error||"Unable to generate content.");setStory(d.stories?.[0]||null)}catch(e){setError(e instanceof Error?e.message:"Unable to generate content.")}finally{setLoading(false)}}
+ const thread=story?.thread?.tweets?.join("\n\n")||"";
+ async function copy(){if(!thread)return;await navigator.clipboard.writeText(thread);setCopied(true);setTimeout(()=>setCopied(false),1400)}
+ return <section className="url-generator"><div className="url-generator-head"><div><div className="url-kicker"><Link2 size={13}/> SOURCE-TO-CONTENT</div><h2>Generate from any article</h2><p>Paste a public crypto/Web3 article and turn it into a grounded X thread.</p></div><Sparkles size={22}/></div><div className="url-input-row"><input value={url} onChange={e=>setUrl(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")generate()}} placeholder="https://example.com/crypto-news/article"/><button onClick={generate} disabled={loading}>{loading?<Loader2 size={15} className="spin"/>:<ArrowRight size={15}/>} {loading?"Generating…":"Generate content"}</button></div>{error&&<div className="url-error">{error}</div>}{story&&<div className="url-result"><div className="url-result-top"><div><span>Generated thread</span><h3>{story.headline}</h3></div><button onClick={()=>{setStory(null);setUrl("")}}><X size={14}/></button></div><p>{story.summary}</p><pre>{thread}</pre><div className="url-result-actions"><button onClick={copy}>{copied?<Check size={13}/>:<Copy size={13}/>} {copied?"Copied":"Copy thread"}</button>{story.sources?.[0]&&<a href={story.sources[0]} target="_blank" rel="noreferrer">Open source</a>}</div></div>}</section>
+}
