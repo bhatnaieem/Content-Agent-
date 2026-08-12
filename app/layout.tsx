@@ -4,6 +4,7 @@ import "./light-theme.css";
 import "./ui-polish.css";
 import "./dashboard.css";
 import PublishNav from "./publish-nav";
+import UrlGenerator from "./url-generator";
 
 export const metadata: Metadata = {
   title: "Web3 Pulse AI",
@@ -11,5 +12,5 @@ export const metadata: Metadata = {
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  return <html lang="en"><body>{children}<PublishNav /></body></html>;
+  return <html lang="en"><body>{children}<UrlGenerator /><PublishNav /></body></html>;
 }
