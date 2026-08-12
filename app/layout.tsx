@@ -4,6 +4,7 @@ import "./light-theme.css";
 import "./ui-polish.css";
 import "./dashboard.css";
 import "./url-generator.css";
+import "./mobile-polish.css";
 import PublishNav from "./publish-nav";
 import UrlGenerator from "./url-generator";
 
