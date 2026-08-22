@@ -1,30 +1,21 @@
 # LinkedIn Weekend Agent
 
-A small Next.js/Vercel agent that connects to a personal LinkedIn account, generates one original LinkedIn post with Gemini, generates a supporting image with Pollinations, uploads the image to LinkedIn, and publishes the post every Sunday.
+A deliberately simple standalone Next.js/Vercel agent. After one-time LinkedIn connection, it automatically publishes one AI-written LinkedIn post with an AI-generated image every Sunday.
 
-## Stack
-- Next.js 14 + Vercel Cron
-- Gemini API for post generation
-- Pollinations for image generation
-- LinkedIn OAuth + Posts API + Images API
-- Supabase for encrypted LinkedIn tokens and post history
+## Content
+The agent is restricted to **marketing, entrepreneurship and business in India**. Gemini chooses a fresh angle each week from Indian startups, D2C, MSMEs, consumer behaviour, advertising, branding, digital marketing, AI in business, founders, distribution, sales, business models and market opportunities.
+
+## Flow
+Sunday cron → Gemini writes post + image prompt → image generated → image uploaded to LinkedIn → post published → history recorded.
+
+No weekly approval, manual run or research workflow is required.
 
 ## Setup
-1. In Supabase, run `supabase/schema.sql`.
-2. Create a LinkedIn developer app and configure the OAuth redirect URI to `/api/auth/linkedin/callback`. Request `openid`, `profile`, and `w_member_social`.
-3. Add all values from `.env.example` to the Vercel project.
-4. Set the Vercel project root directory to `linkedin-agent`.
-5. Deploy the `linkedin-agent` branch.
-6. Open the deployment and click **Connect LinkedIn** once.
-7. The production Vercel Cron invokes `/api/cron` every Sunday at 04:30 UTC (10:00 AM IST, subject to Vercel Hobby's scheduling window).
+1. Run `supabase/schema.sql` in Supabase.
+2. Create a LinkedIn developer app and configure the OAuth callback `/api/auth/linkedin/callback` with `openid`, `profile`, and `w_member_social`.
+3. Add the variables in `.env.example` to Vercel.
+4. Deploy this directory as a standalone Vercel project with Root Directory `linkedin-agent`.
+5. Open the deployed site and click **Connect LinkedIn** once.
+6. The configured Sunday cron runs automatically.
 
-## Content controls
-Set `LINKEDIN_PROFILE_CONTEXT`, `LINKEDIN_TOPICS`, and `LINKEDIN_TONE` to shape the agent's voice.
-
-## Image note
-Gemini's current native image models are not included in the Gemini API free tier. This build therefore keeps Gemini for free text generation and uses Pollinations for the image. If you later want Gemini to generate the image too, swap `generateImage()` for a paid Gemini image model.
-
-## Security
-- LinkedIn tokens are encrypted before being stored in Supabase.
-- `CRON_SECRET` protects manual/cron execution.
-- Never commit `.env` or API keys.
+Gemini is used for text generation. Pollinations is used for images so the text workflow can remain on the free Gemini API tier.
